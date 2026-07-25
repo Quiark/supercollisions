@@ -141,7 +141,7 @@ SynthDef(\metallic_arp, {
     // Apply envelope and output in stereo
     sig = Pan2.ar(sig * ampEnv * amp, pan);
     Out.ar(out, sig);
-}).gui;
+}).add;
 
 
 // ---- mine -------
@@ -153,7 +153,7 @@ SynthDef(\tonea, { |out=0, amp=0.75, freq=440|
 }).add;
 
 SynthDef(\pupluck, {
-    arg out = 0, freq = 110,  gate = 1,  detune = 0.003,  fd = 5;
+    arg out = 0, freq = 110,  gate = 1,  detune = 0.003,  fd = 5, amp = 0.9;
     var sig, ampEnv;
 
 	var detuneFactors = [ -2, -1, 0, 1 ,2] * detune + 1;
@@ -163,11 +163,42 @@ SynthDef(\pupluck, {
 	//sig = sig + Saw.ar(freq * 2, 0.3);
 	sig = sig + SinOsc.ar(freq / 2, 0.3);
 	// sig = Ringz.ar(sig, freq * 4, MouseY.kr(0, 1));
-	sig = LPF.ar(sig, (freq * fd).poll);
+	sig = LPF.ar(sig, (freq * fd));
 
 
 	sig = Splay.ar(sig);
 //	sig = NHHall.ar(sig);
 
-	Out.ar(out, sig * ampEnv);
-}).play;
+	Out.ar(out, sig * ampEnv * amp);
+}).add;
+
+
+
+// TODO would be sick to have UI to tune detune (sic) while playing arps
+SynthDef(\sarp, {
+	arg gate = 1, atk = 0.02, rls = 0.3, amp = 0.4, freq = 440, detune = 0.0045;
+	var env;
+	//var sig = SinOsc.ar(440 * EnvGen.kr(Env.perc(atk, rls)) * [0.98, 0.99, 1.01, 1.02]);
+	//var sig = Klank.ar(`[[200, 315, 577, freq], nil, [1, 1, 1, 1]], Impulse.ar(2, 0, 0.4));
+	var sig = Saw.ar(freq * 0.25 * ([-2, -1, 0, 1, 2] * detune + 1), 0.8);
+	//sig = Mix.ar([sig, pad]);
+	sig = LPF.ar(sig, freq); 
+	freq.postln;
+
+	env = EnvGen.kr(Env.perc(atk, rls), gate, doneAction: 2);
+	sig = Splay.ar(sig);
+	Out.ar(0, sig * env * amp);
+}).add;
+
+SynthDef(\plink, {
+	arg gate = 1, atk = 0.02, rls = 1.1, freq = 880, amp = 0.4;
+	var env, sig;
+
+	sig = Klank.ar(`[[freq * 0.71, freq, freq * 1.43, freq * 1.92], nil, [1, 1, 1, 1]], Impulse.ar(0.1, 0, 0.5));
+	env = EnvGen.kr(Env.perc(atk, rls), gate, doneAction: 2);
+	// TODO I want this applied on the whole thing
+	// TODO don't forget to switch the env
+	//sig = FreeVerb.ar(sig * env);
+	sig = Splay.ar(sig * env * amp);
+	Out.ar(0, sig);
+}).add;

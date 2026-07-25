@@ -14,6 +14,21 @@
     $g -> 10, $h -> 11, $t -> 12
 ];
 
+// OSC button names -> same typing keys used by the GUI
+~oscKeyMap = IdentityDictionary.new;
+~oscKeyMap.put(\C, $a);
+~oscKeyMap.put(\cs, $,);
+~oscKeyMap.put(\D, $o);
+~oscKeyMap.put(\ds, $.);
+~oscKeyMap.put(\E, $e);
+~oscKeyMap.put(\F, $u);
+~oscKeyMap.put(\fs, $y);
+~oscKeyMap.put(\G, $i);
+~oscKeyMap.put(\gs, $f);
+~oscKeyMap.put(\A, $d);
+~oscKeyMap.put(\as, $g);
+~oscKeyMap.put(\B, $h);
+
 (
 // ---------- synth ----------
 SynthDef(\kbdAmbient, { |out=0, freq=440, gate=1, amp=0.15, bright=2000, rq=0.25, pan=0|
@@ -63,13 +78,12 @@ SynthDef(\kbdAmbient, { |out=0, freq=440, gate=1, amp=0.15, bright=2000, rq=0.25
     if(~held[ch].notNil) { ^nil };
 
     midi = ~degreeToMidi.(deg);
-    ~held[ch] = Synth(\metallic_arp, [
-
+    ~held[ch] = Synth(\ring, [
         \freq, midi.midicps,
         \amp, 0.9,
-        \bright, 1800,
-        \rq, 0.22,
-        \pan, deg.linlin(0, 12, -0.6, 0.6)
+        //\bright, 1800,
+        //\rq, 0.22,
+        //\pan, deg.linlin(0, 12, -0.6, 0.6)
     ]);
 };
 
@@ -87,8 +101,26 @@ SynthDef(\kbdAmbient, { |out=0, freq=440, gate=1, amp=0.15, bright=2000, rq=0.25
     "panic: all notes off".postln;
 };
 
+~oscKeyAction = { |msg|
+    var key = msg[0].asString.split($/).last.asSymbol;
+    var ch = ~oscKeyMap[key];
+    var value = msg[1];
+
+    if(ch.notNil) {
+        if(value == 0) {
+            ~noteOff.(ch);
+        } {
+            ~noteOn.(ch);
+        };
+    };
+};
+
+~oscKeyResponders = ~oscKeyMap.keys.collect { |key|
+    OSCdef(("kbd_" ++ key.asString).asSymbol, ~oscKeyAction, ("/keys/" ++ key.asString).asSymbol);
+};
+
 // ---------- GUI ----------
-~w = Window("SC typing keyboard (click here first)", Rect(100, 100, 560, 95)).front.alwaysOnTop_(true);
+~w = Window("SC typing keyboard (click here first)", Rect(100, 100, 560, 95)).front;
 ~w.view.background = Color.gray(0.15);
 
 StaticText(~w, Rect(10, 10, 540, 18))
@@ -118,7 +150,10 @@ StaticText(~w, Rect(10, 10, 540, 18))
     ~noteOff.(char);
 };
 
-~w.onClose_({ ~panic.(); });
+~w.onClose_({
+    ~oscKeyResponders.do(_.free);
+    ~panic.();
+});
 
 "Ready: click the window, then type a w s e d f ...".postln;
 )

@@ -3,9 +3,10 @@
 s.waitForBoot({
     // Load synthdefs (executes that file in this interpreter)
     (~projectDir +/+ "synthdefs.scd").load;
+    (~projectDir +/+ "piece1.scd").load;
 
 	(~projectDir +/+ "drumseq.scd").load;
-	 (~projectDir +/+ "kbd.scd").load;
+	(~projectDir +/+ "kbd.scd").load;
 	OSCdef.trace(true);
 	OSCdef.trace(false);
 
@@ -21,33 +22,73 @@ thisProcess.addOSCRecvFunc({ |msg, time, replyAddr, recvPort|
 
 )
 
+~pushTouchOscGrid.(~sarpStepsByRow);
+~pushTouchOscGrid.(~stepsByRow);
+
 OSCdef.all.keys.postln;
 
 Synth(\metallic_arp, [atk: 0.3, freq: 380, rel: 0.9, modIndex: 3.5, modMult: 1.231]);
 
 Env.adr
 SCLOrkSynths.gui;
+{ Klank.ar(`[[800, 1071, 1153, 1723], nil, [1, 1, 1, 1]], Impulse.ar(2, 0, 0.1)) }.play;
 
+{ Klank.ar(`[[800, 1071, 1353, 1723], nil, [1, 1, 1, 1]], Dust.ar(8, 0.1)) }.play;
 
-// NOTE: ok right now by accident it's kind of a nice tone
+{ Klank.ar(`[[800, 1071, 1353, 1723], nil, [1, 1, 1, 1]], PinkNoise.ar(0.007)) }.play;
+
+{ Klank.ar(`[[200, 671, 1153, 1723], nil, [1, 1, 1, 1]], PinkNoise.ar([0.007, 0.007])) }.play;
+
 (
-SynthDef(\arp, {
-    arg out = 0, freq = 110,  gate = 1,  detune = 0.003,  fd = 5;
+p = Pbind(
+    \instrument, \sarp,
+    \degree, Pseq([0, 2, 4, 7,], inf),
+    \scale, Scale.minor,
+    \octave, 6,
+	\amp, 0.3,
+    \dur, 0.425, // Fast 16th notes
+    \legato, 0.6,
+).play;
+)
+
+p.stop;
+(
+SynthDef(\ringarp, {
+    arg out = 0, freq = 440,  gate = 1,  detune = 0.0015,  fd = 5;
     var sig, ampEnv;
 
-	var detuneFactors = [ -2, -1, 0, 1 ,2] * detune + 1;
+	var detuneFactors = [ -2, -1, 0, 1, 2] * detune + 1;
 
-	ampEnv = EnvGen.kr(Env.perc(0.01, 1.0, 1), gate, doneAction: 2);
-	sig = Pulse.ar(freq * detuneFactors, 0.4);
-	sig = sig + Saw.ar(freq * 2, 0.3);
-	sig = sig + SinOsc.ar(freq / 2, 0.3);
-	// sig = Ringz.ar(sig, freq * 4, MouseY.kr(0, 1));
-	sig = LPF.ar(sig, (freq * fd).poll);
+	ampEnv = EnvGen.kr(Env.perc(0.21, 0.6), gate, doneAction: 2);
+	//sig = Pulse.ar(freq * detuneFactors, 0.4);
+	//sig = sig + Saw.ar(freq * 2, 0.3);
+	sig = Pulse.ar(freq * detuneFactors, 0.7);
+	//sig = Resonz.ar(sig, freq * 4, 0.5);
+	sig = LPF.ar(sig, Line.kr(freq / 4, freq * 4, 0.9));
 
 
 	sig = Splay.ar(sig);
-//	sig = NHHall.ar(sig);
+	//sig = NHHall.ar(sig);
 
 	Out.ar(out, sig * ampEnv);
 }).play;
 )
+
+(
+Pdef(\arp,
+	Pbind(
+		\instrument, \plink,
+		\scale, Scale.minorPentatonic,
+		\octave, 5,
+		\degree, Pseq([
+			Pser([0, 2, 4, 7], 8),   // repeat pattern length 8
+			Pser([3, 5, 7, 10], 8)
+		], inf),
+		\dur, 1/12,
+		\legato, 0.7,
+		\amp, 0.1
+	)
+).play;
+)
+
+Pdef(\arp).stop;

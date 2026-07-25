@@ -1,8 +1,35 @@
 // --- step state (16 on/off) ---
 ~stepsByRow = Array.fill(7, { Array.fill(16, 0) }); // rows 1..8 (9 for safety)
+// Grid rows are zero-based internally; each row contains 16 values of 0 or 1.
+~sarpStepsByRow = Array.fill(7, { Array.fill(16, 0) });
+~editSarp = false;
+
+// MIDI root plus semitone offsets, indexed by sarp grid row.
+~sarpRoot = 60;
+~sarpNotes = [0, 2, 3, 5, 7, 10, 12];
+~sarpFreqForRow = { |row| (~sarpRoot + ~sarpNotes.wrapAt(row)).midicps };
 
 // optional: choose which drum this sequencer plays
 ~drums = [\kick, \snare, \hat, \hihat1];
+
+~touchOscHost = "10.0.8.34";
+~touchOscPort = 7107;
+~touchOsc = NetAddr(~touchOscHost, ~touchOscPort);
+
+~pushTouchOscGrid = { |steps|
+	steps.do { |rowSteps, row|
+		rowSteps.do { |val, beat|
+			~touchOsc.sendMsg(
+				"/2/multitoggle/%/%".format(row + 1, beat + 1),
+				val.asFloat
+			);
+		};
+	};
+};
+
+~pushCurrentTouchOscGrid = {
+	~pushTouchOscGrid.(~editSarp.if(~sarpStepsByRow, ~stepsByRow));
+};
 
 // --- tempo + clock ---
 TempoClock.default.tempo = 120/60; // 120 bpm
@@ -25,6 +52,26 @@ TempoClock.default.tempo = 120/60; // 120 bpm
 		)
 	).play;
 };
+
+Pdef(\sarpseq,
+	Pbind(
+		\instrument, \ringarp,
+		\dur, 1/4,
+		\step, Pseries(0, 1, inf) % 16,
+		\freq, Pfunc { |ev|
+			var i = ev[\step].asInteger;
+			var rows;
+
+			rows = ~sarpStepsByRow.collect { |steps, row|
+				(steps[i] == 1).if(row, nil)
+			}.reject(_.isNil);
+
+			rows.collect { |row| ~sarpFreqForRow.(row) }
+		},
+		\amp, 0.25,
+		\type, Pfunc { |ev| (ev[\freq].size > 0).if(\note, \rest) }
+	)
+).play;
 // OSCdef.trace(true);  // watch the post window while you press toggles
 
 
@@ -41,8 +88,12 @@ TempoClock.default.tempo = 120/60; // 120 bpm
 	// We only care about /2/multitoggle/<row>/<beat>
 	// Fast parse: split by '/'
 	// "/2/multitoggle/4/10" -> ["", "2", "multitoggle", "4", "10"]
-	var parts, row, beat, val;
+	var parts, row, beat, val, targetSteps;
 
+	if(path == "/3/toggle5") {
+		~editSarp = (msg[1].asFloat > 0.5);
+		("sarp edit mode: %".format(~editSarp)).postln;
+	};
 
 	if(path.beginsWith("/2/multitoggle/")) {
 		parts = path.split($/);
@@ -55,11 +106,12 @@ TempoClock.default.tempo = 120/60; // 120 bpm
 			val  = msg[1].asFloat; // usually 0.0/1.0
 
 			if( beat.inclusivelyBetween(1, 16) ) {
-				~stepsByRow[row][beat-1] = (val > 0.5).if(1, 0);
+				targetSteps = ~editSarp.if(~sarpStepsByRow, ~stepsByRow);
+				targetSteps[row][beat-1] = (val > 0.5).if(1, 0);
 
 				// debug print (comment out once confirmed)
-				("row:% beat:% -> % "
-					.format(row, beat, ~stepsByRow[row][beat-1])).postln;
+				("% row:% beat:% -> % "
+					.format(~editSarp.if("sarp", "drum"), row, beat, targetSteps[row][beat-1])).postln;
 			};
 		};
 	};
