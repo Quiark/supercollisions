@@ -10,7 +10,7 @@
 ~sarpFreqForRow = { |row| (~sarpRoot + ~sarpNotes.wrapAt(row)).midicps };
 
 // optional: choose which drum this sequencer plays
-~drums = [\kick, \snare, \hat, \hihat1];
+~drums = [\kick, \snare, \hat, \hihat1, \kik3];
 
 ~touchOscHost = "10.0.8.34";
 ~touchOscPort = 7107;
@@ -35,7 +35,7 @@
 TempoClock.default.tempo = 120/60; // 120 bpm
 
 // --- pattern: 16 steps, each step checks ~steps[i] ---
-[\kseq, \sseq, \hseq, \hseq1].do { |name, row|
+[\kseq, \sseq, \hseq, \hseq1, \k3seq].do { |name, row|
 	var d = ~drums[row];
 	Pdef(name,
 		Pbind(

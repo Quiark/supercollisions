@@ -12,82 +12,33 @@ metadata: (
 )
 ).add;
 
-
-SynthDef("doubleBass", {
+SynthDef(\kik3, {
 	arg
-	// Standard Values
-	out = 0, pan = 0, amp = 1.0, freq = 440, att = 0.01, rel = 1.0 , crv = -30, vel = 1.0,
-	// Other Controls
-	freqDev = 2, op1mul = 0.1, op2mul = 0.1, op3mul = 0.1, sprd = 0.5, subAmp = 0.1;
+	//Standard Values
+	amp = 1, out = 0, pan = 0, freq = 66,
+	//Amplitude Controls
+	att = 0.01, dec = 0.1, decaylevel = 0.8, rel = 0.3, envCurve = -4,
+	//Timbre Controls
+	sweeptime = 0.08, sweepCurve = \exp, harmonic = 6, preamp = 3;
 
-	var env, op1, op2, op3, op4, snd, sub;
+	var snd, env, fenv;
 
-	// Percussive Envelope
-	env = Env.perc(
-		attackTime: att,
-		releaseTime: rel,
-		curve: crv
-	).ar(doneAction: 2);
+	env = Env.new(levels: [0, amp, decaylevel * amp, 0], times: [att, dec, rel], curve: envCurve).kr(doneAction: 2);
 
-	// Overtones
-	op1 = SinOsc.ar(
-		freq: freq * 4,
-		mul: vel / 2 + op1mul);
+	fenv = Env.new(levels: [freq * harmonic, freq], times: [sweeptime], curve: sweepCurve).kr;
 
-	op2 = SinOsc.ar(
-		freq: freq * 3,
-		phase: op1,
-		mul: vel / 2 + op2mul);
+	snd = SinOsc.ar(freq: fenv, mul: preamp).distort;
 
-	op3 = SinOsc.ar(
-		freq: freq * 2,
-		phase: op2,
-		mul: vel / 2 + op3mul);
+    snd = Normalizer.ar(in: snd, level: env);
 
-	// Fundamental Frequency
-	op4 = SinOsc.ar(
-		freq: freq + NRand(-1 * freqDev, freqDev, 3),
-		phase: op3,
-		mul: vel);
-
-	// Delay Line with Multi-Channel Expansion
-	snd = {
-		DelayN.ar(
-			in: op4,
-			maxdelaytime: 0.06,
-			delaytime: Rand(0.03, 0.06)
-		)} !8;
-
-	// High Pass Filter
-	snd = LeakDC.ar(snd);
-
-	// Stereo Spread
-	snd = Splay.ar(
-		inArray: snd,
-		spread: sprd,
-		level: 0.6,
-		center: pan);
-
-	// Add a sub
-	sub = SinOsc.ar(
-		freq: freq/2,
-		mul: env * subAmp);
-	sub = Pan2.ar(sub, pan);
-	snd = snd + sub;
-
-	//Ouput Stuff
-	snd = snd * env;
-	snd = snd * amp;
-	snd = Limiter.ar(snd);
-	Out.ar(out, snd);
+	Out.ar(out, Pan2.ar(snd, pan));
 },
 metadata: (
-	credit: "Matias Monteagudo",
-	category: \bass,
-	tags: [\pitched, \bass]
-)
+	credit: "Author Unknown",
+	category: \drums,
+	tags: [\unpitched, \bass]
+	)
 ).add;
-
 
 // ---- basic ones from gippity 5 -------
 SynthDef(\kick, { |out=0, amp=0.9|
@@ -175,19 +126,48 @@ SynthDef(\pupluck, {
 
 
 // TODO would be sick to have UI to tune detune (sic) while playing arps
+// TODO idk maybe it has a high tone and a low saw (square?) as background at the same time
 SynthDef(\sarp, {
-	arg gate = 1, atk = 0.02, rls = 0.3, amp = 0.4, freq = 440, detune = 0.0045;
-	var env;
+	arg gate = 1, atk = 0.02, rls = 0.3, amp = 0.4, freq = 440, detune = 0.0045, fd = 1.1,
+	delayTime = 0.25, delayDecay = 1.1, delayMix = 0.3;
+
+	var env, del, dry, delayed, freeEnv;
 	//var sig = SinOsc.ar(440 * EnvGen.kr(Env.perc(atk, rls)) * [0.98, 0.99, 1.01, 1.02]);
 	//var sig = Klank.ar(`[[200, 315, 577, freq], nil, [1, 1, 1, 1]], Impulse.ar(2, 0, 0.4));
 	var sig = Saw.ar(freq * 0.25 * ([-2, -1, 0, 1, 2] * detune + 1), 0.8);
 	//sig = Mix.ar([sig, pad]);
-	sig = LPF.ar(sig, freq); 
-	freq.postln;
+	sig = LPF.ar(sig, freq * fd); 
 
-	env = EnvGen.kr(Env.perc(atk, rls), gate, doneAction: 2);
-	sig = Splay.ar(sig);
-	Out.ar(0, sig * env * amp);
+
+	env = EnvGen.kr(Env.perc(atk, rls), gate);
+	sig = Splay.ar(sig) * env;
+	sig = NHHall.ar(sig, mix: 0.3, room: 0.9, damp: 0.5);
+	/*
+	// need to give more time for delay to play
+	freeEnv = EnvGen.kr(
+		Env([1, 1, 0], [rls + (delayTime * 1.5) + delayDecay, 0.02]),
+		gate,
+		doneAction: 2
+	);
+
+	dry = sig;
+
+	delayed = CombC.ar(
+		dry,
+		maxdelaytime: 1.0,
+		delaytime: [delayTime, delayTime],
+		decaytime: delayDecay
+	);
+
+	//delayed = LPF.ar(delayed, 4500);
+	//delayed = HPF.ar(delayed, 180);
+
+	//sig = XFade2.ar(dry, delayed, 0.5);
+
+	sig = dry + (delayed * 0.4);
+	*/
+	freeEnv = env;
+	Out.ar(0, sig * amp * freeEnv);
 }).add;
 
 SynthDef(\plink, {

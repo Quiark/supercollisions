@@ -6,6 +6,7 @@
 ~scale = Scale.minorPentatonic;   // try Scale.dorian, Scale.aeolian
 ~root  = 48;                      // MIDI note
 ~oct   = 1;
+~kbdInstr = \kbdAmbient;            // synthdef name
 
 // typing keys -> scale degree index
 ~keyMap = IdentityDictionary[
@@ -28,6 +29,14 @@
 ~oscKeyMap.put(\A, $d);
 ~oscKeyMap.put(\as, $g);
 ~oscKeyMap.put(\B, $h);
+
+~oscKeyMap.put(\1, $a);
+~oscKeyMap.put(\2, $o);
+~oscKeyMap.put(\3, $e);
+~oscKeyMap.put(\4, $u);
+~oscKeyMap.put(\5, $i);
+~oscKeyMap.put(\6, $d);
+~oscKeyMap.put(\7, $h);
 
 (
 // ---------- synth ----------
@@ -70,15 +79,16 @@ SynthDef(\kbdAmbient, { |out=0, freq=440, gate=1, amp=0.15, bright=2000, rq=0.25
 ~noteOn = { |ch|
 	var midi;
     var deg = ~keyMap[ch];
-	'ch='.post;
-	ch.post;
-	' deg='.post;
-	deg.postln;
+	//'ch='.post;
+	//ch.post;
+	//' deg='.post;
+	//deg.postln;
     if(deg.isNil) { ^nil };
     if(~held[ch].notNil) { ^nil };
 
     midi = ~degreeToMidi.(deg);
-    ~held[ch] = Synth(\ring, [
+	'midi='.post; midi.postln;
+    ~held[ch] = Synth(~kbdInstr, [
         \freq, midi.midicps,
         \amp, 0.9,
         //\bright, 1800,
@@ -105,6 +115,7 @@ SynthDef(\kbdAmbient, { |out=0, freq=440, gate=1, amp=0.15, bright=2000, rq=0.25
     var key = msg[0].asString.split($/).last.asSymbol;
     var ch = ~oscKeyMap[key];
     var value = msg[1];
+	// "key % value % ch %".format(key, value, ch).postln;
 
     if(ch.notNil) {
         if(value == 0) {
@@ -118,6 +129,14 @@ SynthDef(\kbdAmbient, { |out=0, freq=440, gate=1, amp=0.15, bright=2000, rq=0.25
 ~oscKeyResponders = ~oscKeyMap.keys.collect { |key|
     OSCdef(("kbd_" ++ key.asString).asSymbol, ~oscKeyAction, ("/keys/" ++ key.asString).asSymbol);
 };
+
+OSCdef(\push1, ~oscKeyAction, '/group7/C');
+OSCdef(\push2, ~oscKeyAction, '/group7/D');
+OSCdef(\push3, ~oscKeyAction, '/group7/E');
+OSCdef(\push4, ~oscKeyAction, '/group7/F');
+OSCdef(\push5, ~oscKeyAction, '/group7/G');
+OSCdef(\push6, ~oscKeyAction, '/group7/A');
+OSCdef(\push7, ~oscKeyAction, '/group7/B');
 
 // ---------- GUI ----------
 ~w = Window("SC typing keyboard (click here first)", Rect(100, 100, 560, 95)).front;
@@ -142,6 +161,7 @@ StaticText(~w, Rect(10, 10, 540, 18))
         $-, { ~root = (~root - 1).clip(0, 127); ~updateStatus.(); },
         $=, { ~root = (~root + 1).clip(0, 127); ~updateStatus.(); },
         $\\, { ~panic.(); },
+		$l, { ~panic.(); ~reload.(); },
 		{ ~noteOn.(char); ~status.string = "char: %".format(char) }
     );
 };

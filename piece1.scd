@@ -1,7 +1,8 @@
-// originally:
-//\instrument, \sarp,
-//\degree, Pseq([0, 2, 4, 7,], inf),
-
+// TODO: more ideas
+//  - use buttons in PARAMS to switch different note patterns for the ARP
+//  + can we have a global key to reload everything?
+//  - I guess we always need reverb
+//  - KVDRA's arpeggio has params changing over time
 ~arpTranspose = 0;
 ~arpEnable = true;
 ~rotary1 = 0;
@@ -11,13 +12,33 @@
 ~rotary5 = 0;
 ~rotary6 = 0;
 
+
+/*
+SynthDef(\masterReverb, { |out=0, mix=0.28, room=0.88, damp=0.45, amp=1|
+	var dry, wet;
+
+	dry = In.ar(out, 2);
+	wet = FreeVerb2.ar(dry[0], dry[1], mix: mix, room: room, damp: damp);
+	ReplaceOut.ar(out, LeakDC.ar(wet) * amp);
+}).add;
+
+~masterReverb = Synth.tail(s, \masterReverb);
+*/
+
+// originally:
+//\instrument, \sarp,
+//\degree, Pseq([0, 2, 4, 7,], inf),
+//
+// currently random transposes so that i can comfortably tune the arp instrument
 Pdef(\arpeggio, Pbind(
     \instrument, \sarp,
-    \degree, Pseq([0, 2, 4, 7,], inf),
+    \degree, Pseq([0, 2, 4], inf),  // just 3 notes, similar to KVNDRA's arpeggio
+	\detune, Pfunc { ~rotary1.linlin(0, 1, 0.0001, 0.02) },
+	\fd, Pfunc { ~rotary2.linlin(0, 1, 0.5, 1.8) },
     \scale, Scale.minor,
     \octave, 6,
-	\ctranspose, Pfunc { ~arpTranspose },
-	\amp, 0.3,
+	\ctranspose, Pstutter(3, Prand((-8..8), inf)), // TODO re-enable for live control Pfunc { ~arpTranspose },
+	\amp, 0.5,
     \dur, 0.425, // Fast 16th notes
     \legato, 0.6,
 	\type, Pfunc { |x| (~arpEnable).if(\note, \rest) }
@@ -47,30 +68,24 @@ OSCdef(\arpEnable, { |msg|
 
 OSCdef(\rotary1, { |msg|
 	~rotary1 = msg[1].asFloat;
-	("rotary1: " ++ ~rotary1).postln;
 }, '/3/rotary1');
 
 OSCdef(\rotary2, { |msg|
 	~rotary2 = msg[1].asFloat;
-	("rotary2: " ++ ~rotary2).postln;
 }, '/3/rotary2');
 
 OSCdef(\rotary3, { |msg|
 	~rotary3 = msg[1].asFloat;
-	("rotary3: " ++ ~rotary3).postln;
 }, '/3/rotary3');
 
 OSCdef(\rotary4, { |msg|
 	~rotary4 = msg[1].asFloat;
-	("rotary4: " ++ ~rotary4).postln;
 }, '/3/rotary4');
 
 OSCdef(\rotary5, { |msg|
 	~rotary5 = msg[1].asFloat;
-	("rotary5: " ++ ~rotary5).postln;
 }, '/3/rotary5');
 
 OSCdef(\rotary6, { |msg|
 	~rotary6 = msg[1].asFloat;
-	("rotary6: " ++ ~rotary6).postln;
 }, '/3/rotary6');

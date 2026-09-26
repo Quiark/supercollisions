@@ -1,19 +1,25 @@
+(
 ~projectDir = thisProcess.nowExecutingPath.dirname;
 
-s.waitForBoot({
+~reload = {
     // Load synthdefs (executes that file in this interpreter)
     (~projectDir +/+ "synthdefs.scd").load;
-    (~projectDir +/+ "piece1.scd").load;
+	(~projectDir +/+ "piece1.scd").load;
 
-	(~projectDir +/+ "drumseq.scd").load;
-	(~projectDir +/+ "kbd.scd").load;
-	OSCdef.trace(true);
-	OSCdef.trace(false);
+//	(~projectDir +/+ "drumseq.scd").load;
+
+};
+
+(~projectDir +/+ "kbd.scd").load;
+~reload.();
+)
 
 
-});
 
 
+
+~masterReverb.set(\damp, 0.1);
+~masterReverb
 (
 // run this once only
 thisProcess.addOSCRecvFunc({ |msg, time, replyAddr, recvPort|
@@ -25,31 +31,19 @@ thisProcess.addOSCRecvFunc({ |msg, time, replyAddr, recvPort|
 ~pushTouchOscGrid.(~sarpStepsByRow);
 ~pushTouchOscGrid.(~stepsByRow);
 
+	OSCdef.trace(true);
+	OSCdef.trace(false);
+
+
+Pdef(\arpeggio).stop;
+SCLOrkSynths.gui;
 OSCdef.all.keys.postln;
 
 Synth(\metallic_arp, [atk: 0.3, freq: 380, rel: 0.9, modIndex: 3.5, modMult: 1.231]);
 
 Env.adr
-SCLOrkSynths.gui;
-{ Klank.ar(`[[800, 1071, 1153, 1723], nil, [1, 1, 1, 1]], Impulse.ar(2, 0, 0.1)) }.play;
 
-{ Klank.ar(`[[800, 1071, 1353, 1723], nil, [1, 1, 1, 1]], Dust.ar(8, 0.1)) }.play;
 
-{ Klank.ar(`[[800, 1071, 1353, 1723], nil, [1, 1, 1, 1]], PinkNoise.ar(0.007)) }.play;
-
-{ Klank.ar(`[[200, 671, 1153, 1723], nil, [1, 1, 1, 1]], PinkNoise.ar([0.007, 0.007])) }.play;
-
-(
-p = Pbind(
-    \instrument, \sarp,
-    \degree, Pseq([0, 2, 4, 7,], inf),
-    \scale, Scale.minor,
-    \octave, 6,
-	\amp, 0.3,
-    \dur, 0.425, // Fast 16th notes
-    \legato, 0.6,
-).play;
-)
 
 p.stop;
 (
