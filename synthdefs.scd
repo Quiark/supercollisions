@@ -166,6 +166,7 @@ SynthDef(\sarp, {
 
 	sig = dry + (delayed * 0.4);
 	*/
+	// TODO: problem: doesn't free itself
 	freeEnv = env;
 	Out.ar(0, sig * amp * freeEnv);
 }).add;
@@ -179,6 +180,24 @@ SynthDef(\plink, {
 	// TODO I want this applied on the whole thing
 	// TODO don't forget to switch the env
 	//sig = FreeVerb.ar(sig * env);
+	sig = Splay.ar(sig * env * amp);
+	Out.ar(0, sig);
+}).add;
+
+
+// designed to be tuned by the touchosc sliders
+// maps all std params from 0 - 1
+SynthDef(\stones, {
+	arg gate = 1, atk = 0.02, rls = 1.1, freq = 880, amp = 0.4, lpf = 0.5, detune = 0.5, lfodep = 0.9, lforate = 0.5;
+	var env, sig, lfo;
+	// TODO: currently lfodep, lforate unused because controlled interactively
+
+	var detuneFactors = [ -2, -1, 0, 1, 2] * detune * 0.02 + 1;
+
+	env = EnvGen.kr(Env.asr(atk), gate, doneAction: 2);
+	lfo = SinOsc.kr(lforate.linexp(0, 1, 0.1, 10), 0, lfodep.linlin(0, 1, 0.5, 1.5), 1);
+	sig = Saw.ar(freq * detuneFactors, 0.8);
+	sig = LPF.ar(sig, freq * lpf.linexp(0, 1, 0.5, 32));
 	sig = Splay.ar(sig * env * amp);
 	Out.ar(0, sig);
 }).add;
