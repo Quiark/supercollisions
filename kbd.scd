@@ -3,10 +3,10 @@
 
 (
 // ---------- musical settings ----------
-~scale = Scale.minorPentatonic;   // try Scale.dorian, Scale.aeolian
+~scale = Scale.major;   // try Scale.dorian, Scale.aeolian
 ~root  = 36;                      // MIDI note
 ~oct   = 1;
-~kbdInstr = \tonea;            // synthdef name
+~kbdInstr = \stones;            // synthdef name
 
 // typing keys -> scale degree index
 ~keyMap = IdentityDictionary[
@@ -70,7 +70,9 @@ SynthDef(\kbdAmbient, { |out=0, freq=440, gate=1, amp=0.15, bright=2000, rq=0.25
 ~recordPending = IdentityDictionary.new;
 ~cycleStartBeat = ~loopClock.beats;
 ~transportRoutine = nil;
-~noteParams = (lpf: 0.5, detune: 0.5, lfodep: 0.9, lforate: 0.5);
+~noteParams = (lpf: 0.5, lpfq: 0, detune: 0.5, lfodep: 0.9, lforate: 0.5);
+~cutoffMonitorNode = nil;
+~logwrap = 0;
 
 ~loopPosition = {
     var position = (~loopClock.beats - ~cycleStartBeat) % ~loopBeats;
@@ -114,10 +116,19 @@ SynthDef(\kbdAmbient, { |out=0, freq=440, gate=1, amp=0.15, bright=2000, rq=0.25
 };
 
 ~noteOn = { |id, degree, record=true|
+	var syn;
     if(degree.isNil) { ^nil };
     if(~held[id].notNil) { ^nil };
+	" : ".post; ~degreeToMidi.(degree).post; 
+	~logwrap = ~logwrap + 1;
+	if(~logwrap > 10, { ~logwrap = 0; "\n".post; });
 
-    ~held[id] = Synth(~kbdInstr, ~noteArgs.(degree));
+    syn = Synth(~kbdInstr, ~noteArgs.(degree));
+    ~held[id] = syn;
+    if(~cutoffMonitorNode.isNil) {
+        ~cutoffMonitorNode = syn.nodeID;
+        syn.set(\cutoffMonitor, 1);
+    };
     if(record) { ~recordNoteOn.(id, degree) };
 };
 
@@ -125,6 +136,10 @@ SynthDef(\kbdAmbient, { |out=0, freq=440, gate=1, amp=0.15, bright=2000, rq=0.25
     var syn = ~held[id];
     if(syn.notNil) {
         ~recordNoteOff.(id);
+		if(syn.nodeID == ~cutoffMonitorNode) {
+			~cutoffMonitorNode = nil;
+			syn.set(\cutoffMonitor, 0);
+		};
         syn.set(\gate, 0);
         ~held.removeAt(id);
     };
@@ -134,6 +149,7 @@ SynthDef(\kbdAmbient, { |out=0, freq=440, gate=1, amp=0.15, bright=2000, rq=0.25
     ~finishRecording.();
     ~held.values.do { |syn| syn.set(\gate, 0) };
     ~held.clear;
+	~cutoffMonitorNode = nil;
     ~playbackHeld.values.do { |syn| syn.set(\gate, 0) };
     ~playbackHeld.clear;
     "panic: all notes off".postln;
@@ -258,7 +274,7 @@ SynthDef(\kbdAmbient, { |out=0, freq=440, gate=1, amp=0.15, bright=2000, rq=0.25
 ~touchOscNoteResponders = 4.collect { |row|
     8.collect { |column|
         var key = ("n" ++ (row + 1) ++ (column + 1)).asSymbol;
-        var degree = (row * 8) + column;
+        var degree = (row * 7) + column;
         OSCdef(("touchOsc_" ++ key.asString).asSymbol, { |msg, time, addr|
             ~oscNoteAction.(msg, time, addr, degree);
         }, ("/notes/" ++ key.asString).asSymbol);
@@ -278,6 +294,14 @@ SynthDef(\kbdAmbient, { |out=0, freq=440, gate=1, amp=0.15, bright=2000, rq=0.25
         ~noteParams[key] = msg[1];
     }, "/" ++ key);
 };
+
+~cutoffResponder = OSCdef(\stonesCutoff, { |msg|
+    var cutoff = msg[3];
+    {
+        ~cutoffMeter.value = cutoff.explin(20, 12000, 0, 1).clip(0, 1);
+        ~cutoffLabel.string = "CUTOFF: % Hz".format(cutoff.round(1));
+    }.defer;
+}, '/stones/cutoff');
 
 // ---------- GUI ----------
 ~w = Window("SC typing keyboard looper", Rect(100, 100, 640, 337)).front;
@@ -333,6 +357,15 @@ Button(~w, Rect(390, 228, 85, 26))
         ~updateLooperDisplay.();
     });
 };
+
+~cutoffLabel = StaticText(~w, Rect(485, 228, 145, 18))
+.string_("CUTOFF: -- Hz")
+.stringColor_(Color(0.65, 0.95, 0.7));
+
+~cutoffMeter = LevelIndicator(~w, Rect(485, 251, 145, 16))
+.warning_(0.75)
+.critical_(0.9)
+.drawsPeak_(false);
 
 ~updateStatus = {
     ~status.string = "root: % , scale: %, octave: %"
@@ -390,7 +423,8 @@ Button(~w, Rect(390, 228, 85, 26))
     ~oscKeyResponders.do(_.free);
     ~touchOscNoteResponders.do(_.free);
     ~pushResponders.do(_.free);
-    ~noteParamResponders.do(_.free);
+	~noteParamResponders.do(_.free);
+	~cutoffResponder.free;
     ~displayRoutine.stop;
     ~stopTransport.();
     ~panic.();

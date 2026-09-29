@@ -187,17 +187,20 @@ SynthDef(\plink, {
 
 // designed to be tuned by the touchosc sliders
 // maps all std params from 0 - 1
+// TODO: LFO to raise Q at the end of the note, like a pluck?
+// kvdrna-like arp: set lfodep and lfo rate to around 0.8
 SynthDef(\stones, {
-	arg gate = 1, atk = 0.02, rls = 1.1, freq = 880, amp = 0.4, lpf = 0.5, detune = 0.5, lfodep = 0.9, lforate = 0.5;
-	var env, sig, lfo;
-	// TODO: currently lfodep, lforate unused because controlled interactively
+	arg gate = 1, atk = 0.02, rls = 1.1, freq = 880, amp = 0.4, lpf = 0.5, lpfq = 0, detune = 0.5, lfodep = 0.9, lforate = 0.5, cutoffMonitor = 0;
+	var env, sig, lfo, cutoff;
 
 	var detuneFactors = [ -2, -1, 0, 1, 2] * detune * 0.02 + 1;
 
 	env = EnvGen.kr(Env.asr(atk), gate, doneAction: 2);
-	lfo = SinOsc.kr(lforate.linexp(0, 1, 0.1, 10), 0, lfodep.linlin(0, 1, 0.5, 1.5), 1);
+	lfo = EnvGen.kr(Env.perc(lforate.linexp(0, 1, 2, 0.01), lfodep.linexp(0, 1, 2, 0.01)), gate);
 	sig = Saw.ar(freq * detuneFactors, 0.8);
-	sig = LPF.ar(sig, freq * lpf.linexp(0, 1, 0.5, 32));
+	cutoff = (freq * lpf.linexp(0, 1, 0.5, 32) * (1 + lfo)).max(20);
+	SendReply.kr(Impulse.kr(20) * cutoffMonitor, '/stones/cutoff', cutoff);
+	sig = RLPF.ar(sig, cutoff, lpfq.linlin(0, 1, 1, 0.05));
 	sig = Splay.ar(sig * env * amp);
 	Out.ar(0, sig);
 }).add;
