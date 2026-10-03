@@ -185,22 +185,29 @@ SynthDef(\plink, {
 }).add;
 
 
+// percussive saw instrument
 // designed to be tuned by the touchosc sliders
 // maps all std params from 0 - 1
 // TODO: LFO to raise Q at the end of the note, like a pluck?
-// kvdrna-like arp: set lfodep and lfo rate to around 0.8
+// kvdrna-like arp: set lfodep and lfo rate to around 0.2
 SynthDef(\stones, {
-	arg gate = 1, atk = 0.02, rls = 1.1, freq = 880, amp = 0.4, lpf = 0.5, lpfq = 0, detune = 0.5, lfodep = 0.9, lforate = 0.5, cutoffMonitor = 0;
-	var env, sig, lfo, cutoff;
+	arg gate = 1, atk = 0.02, rls = 1.1, freq = 880, amp = 0.4, 
+		lpf = 0.5, lpfq = 0, detune = 0.5, lfodep = 0.9, lforate = 0.5, 
+		alpha = 0, beta = 0, cutoffMonitor = 0;
+	var env, sig, lfo, resonanceLfo, cutoff, hasStarted, startupTimeout;
 
 	var detuneFactors = [ -2, -1, 0, 1, 2] * detune * 0.02 + 1;
 
-	env = EnvGen.kr(Env.asr(atk), gate, doneAction: 2);
-	lfo = EnvGen.kr(Env.perc(lforate.linexp(0, 1, 2, 0.01), lfodep.linexp(0, 1, 2, 0.01)), gate);
+	hasStarted = SetResetFF.kr(gate > 0, 0);
+	startupTimeout = Line.kr(0, 1, 0.05);
+	FreeSelf.kr(startupTimeout * (gate <= 0) * (hasStarted <= 0));
+	env = EnvGen.kr(Env.asr(atk, 1, rls), gate, doneAction: 2);
+	lfo = EnvGen.kr(Env.perc(lforate.linexp(0, 1, 0.01, 2), lfodep.linexp(0, 1, 0.01, 2)), gate);
+	resonanceLfo = EnvGen.kr(Env.perc(beta.linexp(0, 1, 0.01, 2), alpha.linexp(0, 1, 0.01, 2)), gate);
 	sig = Saw.ar(freq * detuneFactors, 0.8);
 	cutoff = (freq * lpf.linexp(0, 1, 0.5, 32) * (1 + lfo)).max(20);
 	SendReply.kr(Impulse.kr(20) * cutoffMonitor, '/stones/cutoff', cutoff);
-	sig = RLPF.ar(sig, cutoff, lpfq.linlin(0, 1, 1, 0.05));
+	sig = RLPF.ar(sig, cutoff, (lpfq + resonanceLfo).clip(0, 1).linlin(0, 1, 1, 0.05));
 	sig = Splay.ar(sig * env * amp);
 	Out.ar(0, sig);
 }).add;

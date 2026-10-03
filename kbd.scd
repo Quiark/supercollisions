@@ -70,9 +70,18 @@ SynthDef(\kbdAmbient, { |out=0, freq=440, gate=1, amp=0.15, bright=2000, rq=0.25
 ~recordPending = IdentityDictionary.new;
 ~cycleStartBeat = ~loopClock.beats;
 ~transportRoutine = nil;
-~noteParams = (lpf: 0.5, lpfq: 0, detune: 0.5, lfodep: 0.9, lforate: 0.5);
+~noteParams = (lpf: 0.5, lpfq: 0, detune: 0.5, lfodep: 0.9, lforate: 0.5, alpha: 0, beta: 0);
 ~cutoffMonitorNode = nil;
 ~logwrap = 0;
+~touchOscMode = \play;
+if(~arpPlayers.notNil) { ~arpPlayers.values.do(_.stop) };
+~arpPatternButtons = IdentityDictionary[
+    \n11 -> \p11,
+    \n12 -> \p12,
+    \n13 -> \p13,
+    \n14 -> \p14
+];
+~arpPlayers = IdentityDictionary.new;
 
 ~loopPosition = {
     var position = (~loopClock.beats - ~cycleStartBeat) % ~loopBeats;
@@ -115,6 +124,49 @@ SynthDef(\kbdAmbient, { |out=0, freq=440, gate=1, amp=0.15, bright=2000, rq=0.25
     args;
 };
 
+~makeArpPattern = { |degrees|
+    Pbind(
+        \instrument, Pfunc { ~kbdInstr },
+        \degree, Pseq(degrees, inf),
+        \freq, Pfunc { |event| ~degreeToMidi.(event[\degree]).midicps },
+        \dur, 1/4,
+        \legato, 0.75,
+        \rls, 0.3,
+        \amp, 0.14,
+        \lpf, Pfunc { ~noteParams[\lpf] },
+        \lpfq, Pfunc { ~noteParams[\lpfq] },
+        \detune, Pfunc { ~noteParams[\detune] },
+        \lfodep, Pfunc { ~noteParams[\lfodep] },
+        \lforate, Pfunc { ~noteParams[\lforate] },
+        \alpha, Pfunc { ~noteParams[\alpha] },
+        \beta, Pfunc { ~noteParams[\beta] }
+    );
+};
+
+// typical patterns:
+// [1, 3, 5, 7] - major arpeggio
+// [1, 2, 3, 6] - minor arpeggio
+// ;e
+Pdef(\p11, ~makeArpPattern.([1, 3, 5, 7]));
+Pdef(\p12, ~makeArpPattern.([1, 2, 3, 6]));
+Pdef(\p13, ~makeArpPattern.([0, 2, 12, 10, 35]));
+Pdef(\p14, ~makeArpPattern.([14, 21, 16, 18, 14, 18, 21, 16]));
+
+~stopArpPatterns = {
+    ~arpPlayers.values.do(_.stop);
+    ~arpPlayers.clear;
+};
+
+~toggleArpPattern = { |key|
+    var player = ~arpPlayers[key];
+    if(player.notNil) {
+        player.stop;
+        ~arpPlayers.removeAt(key);
+    } {
+        ~arpPlayers[key] = Pdef(key).play(~loopClock, quant: ~beatsPerBar);
+    };
+};
+
 ~noteOn = { |id, degree, record=true|
 	var syn;
     if(degree.isNil) { ^nil };
@@ -150,6 +202,7 @@ SynthDef(\kbdAmbient, { |out=0, freq=440, gate=1, amp=0.15, bright=2000, rq=0.25
     ~held.values.do { |syn| syn.set(\gate, 0) };
     ~held.clear;
 	~cutoffMonitorNode = nil;
+    ~stopArpPatterns.();
     ~playbackHeld.values.do { |syn| syn.set(\gate, 0) };
     ~playbackHeld.clear;
     "panic: all notes off".postln;
@@ -276,10 +329,31 @@ SynthDef(\kbdAmbient, { |out=0, freq=440, gate=1, amp=0.15, bright=2000, rq=0.25
         var key = ("n" ++ (row + 1) ++ (column + 1)).asSymbol;
         var degree = (row * 7) + column;
         OSCdef(("touchOsc_" ++ key.asString).asSymbol, { |msg, time, addr|
-            ~oscNoteAction.(msg, time, addr, degree);
+            var value = msg[1].asFloat;
+            var pattern = ~arpPatternButtons[key];
+            if(value <= 0) {
+                ~oscNoteAction.(msg, time, addr, degree);
+            } {
+                if(~touchOscMode == \play) {
+                    ~oscNoteAction.(msg, time, addr, degree);
+                } {
+                    if(pattern.notNil) { ~toggleArpPattern.(pattern) };
+                };
+            };
         }, ("/notes/" ++ key.asString).asSymbol);
     };
 }.flat;
+
+~touchOscModeResponders = [
+    OSCdef(\mPlay, { |msg|
+		msg.postln;
+        if(msg[1].asFloat > 0.5) { ~touchOscMode = \play };
+    }, '/mPlay'),
+    OSCdef(\mTog, { |msg|
+		msg.postln;
+        if(msg[1].asFloat > 0.5) { ~touchOscMode = \toggle };
+    }, '/mTog')
+];
 
 // Beatmachine, page 2 group 7
 ~pushResponders = [\C, \D, \E, \F, \G, \A, \B].collect { |key, index|
@@ -422,9 +496,10 @@ Button(~w, Rect(390, 228, 85, 26))
 ~w.onClose_({
     ~oscKeyResponders.do(_.free);
     ~touchOscNoteResponders.do(_.free);
+    ~touchOscModeResponders.do(_.free);
     ~pushResponders.do(_.free);
 	~noteParamResponders.do(_.free);
-	~cutoffResponder.free;
+    ~cutoffResponder.free;
     ~displayRoutine.stop;
     ~stopTransport.();
     ~panic.();

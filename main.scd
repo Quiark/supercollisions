@@ -18,6 +18,20 @@
 
 
 
+
+
+s.queryAllNodes;
+
+
+
+
+
+
+
+
+~kbdInstr = \stones;
+
+
 ~masterReverb.set(\damp, 0.1);
 ~masterReverb
 (
@@ -41,7 +55,7 @@ OSCdef.all.keys.postln;
 
 Synth(\metallic_arp, [atk: 0.3, freq: 380, rel: 0.9, modIndex: 3.5, modMult: 1.231]);
 
-Env.adr
+Env.asr
 
 
 
@@ -71,18 +85,26 @@ SynthDef(\ringarp, {
 (
 Pdef(\arp,
 	Pbind(
-		\instrument, \plink,
-		\scale, Scale.minorPentatonic,
-		\octave, 5,
-		\degree, Pseq([
-			Pser([0, 2, 4, 7], 8),   // repeat pattern length 8
-			Pser([3, 5, 7, 10], 8)
-		], inf),
-		\dur, 1/12,
+		\instrument, \stones,
+		\scale, ~scale,
+		\octave, 6,
+		\degree, Pseq([0, \rest, 2, \rest, 4], inf),
+		\dur, 0.25,
 		\legato, 0.7,
-		\amp, 0.1
+		\amp, 0.1,
+        \lpf, Pfunc { ~noteParams[\lpf] },
+        \lpfq, Pfunc { ~noteParams[\lpfq] },
+        \detune, Pfunc { ~noteParams[\detune] },
+        \lfodep, Pfunc { ~noteParams[\lfodep] },
+        \lforate, Pfunc { ~noteParams[\lforate] },
+        \alpha, Pfunc { ~noteParams[\alpha] },
+        \beta, Pfunc { ~noteParams[\beta] }
+
 	)
-).play;
+).play(~loopClock, quant: ~beatsPerBar);
 )
+
+
+
 
 Pdef(\arp).stop;
