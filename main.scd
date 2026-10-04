@@ -1,23 +1,19 @@
 (
-~projectDir = thisProcess.nowExecutingPath.dirname;
+	~projectDir = thisProcess.nowExecutingPath.dirname;
 
-~reload = {
-    // Load synthdefs (executes that file in this interpreter)
-    (~projectDir +/+ "synthdefs.scd").load;
-	// (~projectDir +/+ "piece1.scd").load;
+	~reload = {
+		// Load synthdefs (executes that file in this interpreter)
+		(~projectDir +/+ "synthdefs.scd").load;
+		// (~projectDir +/+ "piece1.scd").load;
 
-//	(~projectDir +/+ "drumseq.scd").load;
+	//	(~projectDir +/+ "drumseq.scd").load;
 
-};
 
-~reload.();
-(~projectDir +/+ "kbd.scd").load;
+	};
+
+	~reload.();
+	(~projectDir +/+ "kbd.scd").load;
 )
-
-
-
-
-
 
 
 s.queryAllNodes;
@@ -32,8 +28,6 @@ s.queryAllNodes;
 ~kbdInstr = \stones;
 
 
-~masterReverb.set(\damp, 0.1);
-~masterReverb
 (
 // run this once only
 thisProcess.addOSCRecvFunc({ |msg, time, replyAddr, recvPort|
@@ -102,6 +96,19 @@ Pdef(\arp,
 
 	)
 ).play(~loopClock, quant: ~beatsPerBar);
+)
+
+(
+	~trackNoteParams[0].putAll((
+		lpf: 0.28,
+		lpfq: 0.18,
+		detune: 0.16,
+		lfodep: 0.32,
+		lforate: 0.22,
+		alpha: 0.12,
+		beta: 0.24,
+		amp: 0.28
+	));
 )
 
 

@@ -4,8 +4,7 @@
 (
 // ---------- musical settings ----------
 ~scale = Scale.major;   // try Scale.dorian, Scale.aeolian
-~root  = 36;                      // MIDI note
-~oct   = 1;
+~baseMidi = 48;
 ~kbdInstr = \stones;            // synthdef name
 
 // typing keys -> scale degree index
@@ -55,119 +54,99 @@ SynthDef(\kbdAmbient, { |out=0, freq=440, gate=1, amp=0.15, bright=2000, rq=0.25
 
 // ---------- state ----------
 ~held = IdentityDictionary.new;
-~playbackHeld = IdentityDictionary.new;
-~trackCount = 5;
-~loopBars = 4;
-~beatsPerBar = 4;
-~loopBeats = ~loopBars * ~beatsPerBar;
+~heldDegrees = IdentityDictionary.new;
+~heldSharpCapable = IdentityDictionary.new;
+~heldChords = IdentityDictionary.new;
+~sharpHeld = false;
+~chordMode = 0;
 ~loopClock = TempoClock.new(2);
-~loopTracks = Array.fill(~trackCount, { List.new });
+~trackNames = [\arp1, \bass, \pad, \melody];
+~trackDegrees = Array.fill(~trackNames.size, { List.new });
+~trackIndices = Array.fill(~trackNames.size, 0);
+// Track roots are MIDI base notes.
+~trackRoots = Array.fill(~trackNames.size, { ~baseMidi });
+~arpDegrees = ~trackDegrees[0];
 ~selectedTrack = 0;
 ~recording = false;
 ~playing = false;
-~quantize = false;
-~quantizeStep = 0.25;
-~recordPending = IdentityDictionary.new;
-~cycleStartBeat = ~loopClock.beats;
-~transportRoutine = nil;
-~noteParams = (lpf: 0.5, lpfq: 0, detune: 0.5, lfodep: 0.9, lforate: 0.5, alpha: 0, beta: 0);
+~touchOscMode = \play;
+if(~trackPlayers.notNil) { ~trackPlayers.values.do(_.stop) };
+~trackPlayers = IdentityDictionary.new;
+~trackNoteParams = Array.fill(~trackNames.size, {
+    (lpf: 0.5, lpfq: 0, detune: 0.5, lfodep: 0.9, lforate: 0.5, alpha: 0, beta: 0, amp: 0.33)
+});
+~noteParams = ~trackNoteParams[~selectedTrack];
 ~cutoffMonitorNode = nil;
 ~logwrap = 0;
-~touchOscMode = \play;
-if(~arpPlayers.notNil) { ~arpPlayers.values.do(_.stop) };
-~arpPatternButtons = IdentityDictionary[
-    \n11 -> \p11,
-    \n12 -> \p12,
-    \n13 -> \p13,
-    \n14 -> \p14
-];
-~arpPlayers = IdentityDictionary.new;
-
-~loopPosition = {
-    var position = (~loopClock.beats - ~cycleStartBeat) % ~loopBeats;
-    if(~quantize) {
-        position = (position / ~quantizeStep).round * ~quantizeStep;
-    };
-    position.clip(0, ~loopBeats - ~quantizeStep);
-};
-
-~recordNoteOn = { |ch, degree|
-    if(~recording and: { ~playing }) {
-        ~recordPending[ch] = [degree, ~loopPosition.(), ~selectedTrack];
-    };
-};
-
-~recordNoteOff = { |ch|
-    var pending = ~recordPending.removeAt(ch);
-    var duration;
-    if(pending.notNil) {
-        duration = ~loopPosition.() - pending[1];
-        if(duration <= 0) { duration = duration + ~loopBeats };
-        if(~quantize) { duration = (duration / ~quantizeStep).round * ~quantizeStep };
-        ~loopTracks[pending[2]].add([pending[1], duration.max(0.05), pending[0]]);
-    };
-};
-
-~finishRecording = {
-    ~recordPending.keys.asArray.do { |ch| ~recordNoteOff.(ch) };
-};
 
 ~degreeToMidi = { |deg|
     var degrees = ~scale.degrees;
     var octAdd = (deg div: degrees.size) * 12;
-    ~root + (~oct * 12) + degrees.wrapAt(deg) + octAdd;
+    ~baseMidi + degrees.wrapAt(deg) + octAdd;
 };
 
-~noteArgs = { |degree|
-    var args = [\freq, ~degreeToMidi.(degree).midicps, \amp, 0.9];
+~trackDegreeToMidi = { |trackIndex, degree|
+    var degrees = ~scale.degrees;
+    var octAdd = (degree div: degrees.size) * 12;
+    ~trackRoots[trackIndex] + degrees.wrapAt(degree) + octAdd;
+};
+
+~noteArgs = { |degree, sharp=false|
+    var args = [\freq, (~degreeToMidi.(degree) + sharp.binaryValue).midicps, \amp, 0.9];
     ~noteParams.keysValuesDo { |key, value| args = args.add(key).add(value) };
     args;
 };
 
-~makeArpPattern = { |degrees|
+~makeArpPattern = { |trackIndex|
     Pbind(
         \instrument, Pfunc { ~kbdInstr },
-        \degree, Pseq(degrees, inf),
-        \freq, Pfunc { |event| ~degreeToMidi.(event[\degree]).midicps },
+        \degree, Pfunc {
+            var degree;
+            if(~trackDegrees[trackIndex].isEmpty) {
+                \rest
+            } {
+                degree = ~trackDegrees[trackIndex].wrapAt(~trackIndices[trackIndex]);
+                ~trackIndices[trackIndex] = ~trackIndices[trackIndex] + 1;
+                degree;
+            };
+        },
+        \freq, Pfunc { |event|
+            if(event[\degree] == \rest) { 0 } { ~trackDegreeToMidi.(trackIndex, event[\degree]).midicps };
+        },
         \dur, 1/4,
         \legato, 0.75,
         \rls, 0.3,
-        \amp, 0.14,
-        \lpf, Pfunc { ~noteParams[\lpf] },
-        \lpfq, Pfunc { ~noteParams[\lpfq] },
-        \detune, Pfunc { ~noteParams[\detune] },
-        \lfodep, Pfunc { ~noteParams[\lfodep] },
-        \lforate, Pfunc { ~noteParams[\lforate] },
-        \alpha, Pfunc { ~noteParams[\alpha] },
-        \beta, Pfunc { ~noteParams[\beta] }
+        \amp, Pfunc { ~trackNoteParams[trackIndex][\amp] },
+        \lpf, Pfunc { ~trackNoteParams[trackIndex][\lpf] },
+        \lpfq, Pfunc { ~trackNoteParams[trackIndex][\lpfq] },
+        \detune, Pfunc { ~trackNoteParams[trackIndex][\detune] },
+        \lfodep, Pfunc { ~trackNoteParams[trackIndex][\lfodep] },
+        \lforate, Pfunc { ~trackNoteParams[trackIndex][\lforate] },
+        \alpha, Pfunc { ~trackNoteParams[trackIndex][\alpha] },
+        \beta, Pfunc { ~trackNoteParams[trackIndex][\beta] }
     );
 };
 
-// typical patterns:
-// [1, 3, 5, 7] - major arpeggio
-// [1, 2, 3, 6] - minor arpeggio
-// ;e
-Pdef(\p11, ~makeArpPattern.([1, 3, 5, 7]));
-Pdef(\p12, ~makeArpPattern.([1, 2, 3, 6]));
-Pdef(\p13, ~makeArpPattern.([0, 2, 12, 10, 35]));
-Pdef(\p14, ~makeArpPattern.([14, 21, 16, 18, 14, 18, 21, 16]));
+~trackNames.do { |name, trackIndex| Pdef(name, ~makeArpPattern.(trackIndex)) };
 
-~stopArpPatterns = {
-    ~arpPlayers.values.do(_.stop);
-    ~arpPlayers.clear;
+~recordDegree = { |degree|
+    if(~recording) { ~trackDegrees[~selectedTrack].add(degree) };
 };
 
-~toggleArpPattern = { |key|
-    var player = ~arpPlayers[key];
-    if(player.notNil) {
-        player.stop;
-        ~arpPlayers.removeAt(key);
-    } {
-        ~arpPlayers[key] = Pdef(key).play(~loopClock, quant: ~beatsPerBar);
+~setSharpForHeldNotes = {
+    ~held.keysValuesDo { |id, syn|
+        if(~heldSharpCapable[id]) {
+            syn.set(\freq, (~degreeToMidi.(~heldDegrees[id]) + ~sharpHeld.binaryValue).midicps);
+        };
+    };
+    ~heldChords.values.do { |chord|
+        chord[\synths].do { |syn, index|
+            syn.set(\freq, (~degreeToMidi.(chord[\degrees][index]) + ~sharpHeld.binaryValue).midicps);
+        };
     };
 };
 
-~noteOn = { |id, degree, record=true|
+~noteOn = { |id, degree, record=true, sharpCapable=false|
 	var syn;
     if(degree.isNil) { ^nil };
     if(~held[id].notNil) { ^nil };
@@ -175,133 +154,102 @@ Pdef(\p14, ~makeArpPattern.([14, 21, 16, 18, 14, 18, 21, 16]));
 	~logwrap = ~logwrap + 1;
 	if(~logwrap > 10, { ~logwrap = 0; "\n".post; });
 
-    syn = Synth(~kbdInstr, ~noteArgs.(degree));
+    syn = Synth(~kbdInstr, ~noteArgs.(degree, sharpCapable and: { ~sharpHeld }));
     ~held[id] = syn;
+    ~heldDegrees[id] = degree;
+    ~heldSharpCapable[id] = sharpCapable;
     if(~cutoffMonitorNode.isNil) {
         ~cutoffMonitorNode = syn.nodeID;
         syn.set(\cutoffMonitor, 1);
     };
-    if(record) { ~recordNoteOn.(id, degree) };
+    if(record) { ~recordDegree.(degree) };
 };
 
 ~noteOff = { |id|
     var syn = ~held[id];
     if(syn.notNil) {
-        ~recordNoteOff.(id);
 		if(syn.nodeID == ~cutoffMonitorNode) {
 			~cutoffMonitorNode = nil;
 			syn.set(\cutoffMonitor, 0);
 		};
         syn.set(\gate, 0);
         ~held.removeAt(id);
+        ~heldDegrees.removeAt(id);
+        ~heldSharpCapable.removeAt(id);
+    };
+};
+
+~chordNoteOn = { |id, degree|
+    var degrees, synths;
+    if(~held[id].notNil or: { ~heldChords[id].notNil }) { ^nil };
+
+    degrees = if(~chordMode == 1) {
+        [degree, degree + 2, degree + 4]
+    } {
+        [degree, degree + 2, degree + 4, degree + 6]
+    };
+    synths = degrees.collect { |chordDegree|
+        Synth(~kbdInstr, ~noteArgs.(chordDegree, ~sharpHeld));
+    };
+    ~heldChords[id] = (synths: synths, degrees: degrees);
+    if(~cutoffMonitorNode.isNil) {
+        ~cutoffMonitorNode = synths[0].nodeID;
+        synths[0].set(\cutoffMonitor, 1);
+    };
+    ~recordDegree.(degree);
+};
+
+~chordNoteOff = { |id|
+    var chord = ~heldChords[id];
+    if(chord.notNil) {
+        chord[\synths].do { |syn|
+            if(syn.nodeID == ~cutoffMonitorNode) { ~cutoffMonitorNode = nil };
+            syn.set(\gate, 0);
+        };
+        ~heldChords.removeAt(id);
     };
 };
 
 ~panic = {
-    ~finishRecording.();
     ~held.values.do { |syn| syn.set(\gate, 0) };
+    ~heldChords.values.do { |chord| chord[\synths].do { |syn| syn.set(\gate, 0) } };
     ~held.clear;
+	~heldDegrees.clear;
+	~heldSharpCapable.clear;
+	~heldChords.clear;
 	~cutoffMonitorNode = nil;
-    ~stopArpPatterns.();
-    ~playbackHeld.values.do { |syn| syn.set(\gate, 0) };
-    ~playbackHeld.clear;
     "panic: all notes off".postln;
 };
 
-~playTrack = { |trackIndex|
-    ~loopTracks[trackIndex].do { |event, eventIndex|
-        ~loopClock.sched(event[0], {
-            var key = ("play_" ++ trackIndex ++ "_" ++ eventIndex).asSymbol;
-            var synth = Synth(~kbdInstr, ~noteArgs.(event[2]));
-            ~playbackHeld[key] = synth;
-            ~loopClock.sched(event[1], {
-                synth.set(\gate, 0);
-                ~playbackHeld.removeAt(key);
-                nil;
-            });
-            nil;
-        });
-    };
-};
-
-~playCycle = {
-    ~cycleStartBeat = ~loopClock.beats;
-    ~trackCount.do { |trackIndex| ~playTrack.(trackIndex) };
-};
-
-~startTransport = {
-    if(~playing.not) {
-        ~playing = true;
-        ~transportRoutine = Routine({
-            loop {
-                ~playCycle.();
-                ~loopBeats.wait;
-            };
-        }).play(~loopClock, quant: 1);
-    };
-};
-
-~stopTransport = {
-    if(~playing) {
-        if(~recording) { ~finishRecording.() };
-        ~recording = false;
-        ~playing = false;
-        ~transportRoutine.stop;
-        ~transportRoutine = nil;
-        ~playbackHeld.values.do { |syn| syn.set(\gate, 0) };
-        ~playbackHeld.clear;
-    };
-};
-
 ~toggleRecording = {
-    if(~recording) { ~finishRecording.() } { ~startTransport.() };
     ~recording = ~recording.not;
 };
 
 ~clearSelectedTrack = {
-    ~loopTracks[~selectedTrack].clear;
+    ~trackDegrees[~selectedTrack].clear;
+    ~trackIndices[~selectedTrack] = 0;
 };
 
-~timelineString = { |cells|
-    cells.clump(~beatsPerBar).collect { |bar| bar.join }.join("|");
+~transposeSelectedTrack = { |degree|
+    if(degree != \rest) { ~trackRoots[~selectedTrack] = ~degreeToMidi.(degree) };
 };
 
-~trackTimeline = { |track|
-    var cells = Array.fill(~loopBeats, { "." });
-    track.do { |event|
-        var start = event[0].floor.asInteger;
-        var length = event[1].ceil.asInteger.max(1);
-        length.do { |offset|
-            cells.put((start + offset) % ~loopBeats, "▓");
-        };
+~selectTrack = { |trackIndex|
+    ~selectedTrack = trackIndex;
+    ~noteParams = ~trackNoteParams[trackIndex];
+};
+
+~startTransport = {
+    if(~playing.not) {
+        ~trackNames.do { |name| ~trackPlayers[name] = Pdef(name).play(~loopClock) };
+        ~playing = true;
     };
-    ~timelineString.(cells);
 };
 
-~playheadTimeline = { |position|
-    ~timelineString.(Array.fill(~loopBeats, { |index|
-        if(index == position.floor.asInteger) { "^" } { " " };
-    }));
-};
-
-~dumpTracks = {
-    "~loopPatterns = [".postln;
-    ~loopTracks.do { |track, trackIndex|
-        if(track.isEmpty) {
-            "  Pbind(\\type, \\rest, \\dur, %)%"
-            .format(~loopBeats, if(trackIndex < (~trackCount - 1)) { "," } { "" }).postln;
-        } {
-            var patterns = track.collect { |event|
-                "Pseq([Pbind(\\type, \\rest, \\dur, %), Pbind(\\instrument, ~kbdInstr, \\degree, %, \\dur, %, \\legato, 1)], 1)"
-                .format(event[0], event[2], event[1]);
-            };
-            "  Pseq([Ppar([".post;
-            patterns.join(", ").post;
-            "]), Pbind(\\type, \\rest, \\dur, %)], inf)%"
-            .format((~loopBeats - track.collect { |event| event[0] + event[1] }.maxItem).max(0), if(trackIndex < (~trackCount - 1)) { "," } { "" }).postln;
-        };
-    };
-    "];".postln;
+~stopTransport = {
+    ~trackPlayers.values.do(_.stop);
+    ~trackPlayers.clear;
+    ~playing = false;
 };
 
 ~oscNoteAction = { |msg, time, addr, degree|
@@ -311,7 +259,7 @@ Pdef(\p14, ~makeArpPattern.([14, 21, 16, 18, 14, 18, 21, 16]));
     if(value == 0) {
         ~noteOff.(id);
     } {
-        ~noteOn.(id, degree);
+        if(degree == \rest) { ~recordDegree.(degree) } { ~noteOn.(id, degree, true, true) };
     };
 };
 
@@ -327,33 +275,43 @@ Pdef(\p14, ~makeArpPattern.([14, 21, 16, 18, 14, 18, 21, 16]));
 ~touchOscNoteResponders = 4.collect { |row|
     8.collect { |column|
         var key = ("n" ++ (row + 1) ++ (column + 1)).asSymbol;
-        var degree = (row * 7) + column;
+        var degree = if(column == 7) { \rest } { (row * 7) + column };
         OSCdef(("touchOsc_" ++ key.asString).asSymbol, { |msg, time, addr|
             var value = msg[1].asFloat;
-            var pattern = ~arpPatternButtons[key];
-            if(value <= 0) {
-                ~oscNoteAction.(msg, time, addr, degree);
+            var id = "%:%:%".format(addr.ip, addr.port, msg[0]).asSymbol;
+            if(value == 0) {
+                ~noteOff.(id);
+                ~chordNoteOff.(id);
             } {
-                if(~touchOscMode == \play) {
-                    ~oscNoteAction.(msg, time, addr, degree);
+            if(~touchOscMode == \transpose) {
+                ~transposeSelectedTrack.(degree);
+            } {
+                if((~chordMode > 0) and: { degree != \rest }) {
+                    ~chordNoteOn.(id, degree);
                 } {
-                    if(pattern.notNil) { ~toggleArpPattern.(pattern) };
+                    ~oscNoteAction.(msg, time, addr, degree);
                 };
+            };
             };
         }, ("/notes/" ++ key.asString).asSymbol);
     };
 }.flat;
 
-~touchOscModeResponders = [
-    OSCdef(\mPlay, { |msg|
-		msg.postln;
-        if(msg[1].asFloat > 0.5) { ~touchOscMode = \play };
-    }, '/mPlay'),
-    OSCdef(\mTog, { |msg|
-		msg.postln;
-        if(msg[1].asFloat > 0.5) { ~touchOscMode = \toggle };
-    }, '/mTog')
-];
+~touchOscModeResponder = OSCdef(\mTranspose, { |msg|
+    ~touchOscMode = if(msg[1].asFloat > 0.5) { \transpose } { \play };
+    { ~updateLooperDisplay.() }.defer;
+}, '/mTranspose');
+
+~sharpResponder = OSCdef(\mSharp, { |msg|
+    ~sharpHeld = msg[1].asFloat > 0.5;
+    ~setSharpForHeldNotes.();
+}, '/mSharp');
+
+~chordsResponder = OSCdef(\mChords, { |msg|
+    if(msg[1].asFloat > 0.5) {
+        ~chordMode = (~chordMode + 1) % 3;
+    };
+}, '/mChords');
 
 // Beatmachine, page 2 group 7
 ~pushResponders = [\C, \D, \E, \F, \G, \A, \B].collect { |key, index|
@@ -377,12 +335,26 @@ Pdef(\p14, ~makeArpPattern.([14, 21, 16, 18, 14, 18, 21, 16]));
     }.defer;
 }, '/stones/cutoff');
 
+OSCdef(\masterReverbGamma, { |msg|
+    ~masterReverb.set(\damp, msg[1].asFloat.clip(0, 1));
+}, '/gamma');
+
+if(~masterReverb.notNil) { ~masterReverb.free };
+SynthDef(\masterReverb, { |out=0, mix=0.28, room=0.88, damp=0.45, amp=1|
+	var input, signal;
+	input = In.ar(out, 2);
+	signal = FreeVerb2.ar(input[0], input[1], mix, room, damp);
+	ReplaceOut.ar(out, LeakDC.ar(signal) * amp);
+}).add;
+~masterReverb = Synth.tail(s, \masterReverb);
+
+~selectTrack.(0);
 // ---------- GUI ----------
-~w = Window("SC typing keyboard looper", Rect(100, 100, 640, 337)).front;
+~w = Window("SC typing keyboard looper", Rect(100, 100, 640, 310)).front;
 ~w.view.background = Color.gray(0.15);
 
 StaticText(~w, Rect(10, 10, 620, 18))
-.string_("Play: a , o . e u y i f d g h t | Octave: [ ] | Root: - = | Panic: \\")
+.string_("Play: a , o . e u y i f d g h t | Panic: \\")
 .stringColor_(Color.white);
 
 ~status = StaticText(~w, Rect(10, 32, 620, 18)).stringColor_(Color.gray(0.9));
@@ -391,27 +363,19 @@ StaticText(~w, Rect(10, 10, 620, 18))
 .font_(Font("Menlo", 12))
 .stringColor_(Color(0.65, 0.95, 0.7));
 
-~playButton = Button(~w, Rect(10, 228, 85, 26))
-.states_([["PLAY", Color.white, Color.gray(0.3)], ["STOP", Color.white, Color(0.6, 0.2, 0.2)]])
-.action_({ |button|
-    if(button.value == 1) { ~startTransport.() } { ~stopTransport.() };
-    ~recordButton.value = ~recording.binaryValue;
-    ~updateLooperDisplay.();
-});
+Button(~w, Rect(10, 228, 85, 26))
+.states_([["PLAY", Color.white, Color(0.25, 0.4, 0.25)]])
+.action_({ ~startTransport.(); ~updateLooperDisplay.() });
 
-~recordButton = Button(~w, Rect(105, 228, 85, 26))
+Button(~w, Rect(105, 228, 85, 26))
+.states_([["STOP", Color.white, Color(0.6, 0.2, 0.2)]])
+.action_({ ~stopTransport.(); ~updateLooperDisplay.() });
+
+~recordButton = Button(~w, Rect(200, 228, 85, 26))
 .states_([["REC", Color.white, Color.gray(0.3)], ["RECORDING", Color.white, Color.red]])
 .action_({ |button|
     ~toggleRecording.();
     button.value = ~recording.binaryValue;
-    ~playButton.value = ~playing.binaryValue;
-    ~updateLooperDisplay.();
-});
-
-~quantizeButton = Button(~w, Rect(200, 228, 85, 26))
-.states_([["QUANT: OFF", Color.white, Color.gray(0.3)], ["QUANT: 1/16", Color.black, Color(0.85, 0.75, 0.25)]])
-.action_({ |button|
-    ~quantize = button.value == 1;
     ~updateLooperDisplay.();
 });
 
@@ -419,15 +383,11 @@ Button(~w, Rect(295, 228, 85, 26))
 .states_([["CLEAR TRACK", Color.white, Color(0.5, 0.2, 0.2)]])
 .action_({ ~clearSelectedTrack.(); ~updateLooperDisplay.() });
 
-Button(~w, Rect(390, 228, 85, 26))
-.states_([["DUMP PATS", Color.white, Color(0.25, 0.4, 0.25)]])
-.action_({ ~dumpTracks.() });
-
-~trackButtons = ~trackCount.collect { |trackIndex|
-    Button(~w, Rect(10 + (trackIndex * 95), 265, 85, 26))
-    .states_([["TRACK " ++ (trackIndex + 1), Color.white, Color.gray(0.28)]])
+~trackButtons = ~trackNames.collect { |name, trackIndex|
+    Button(~w, Rect(10 + (trackIndex * 95), 275, 85, 26))
+    .states_([[name.asString.toUpper, Color.white, Color.gray(0.28)]])
     .action_({
-        ~selectedTrack = trackIndex;
+        ~selectTrack.(trackIndex);
         ~updateLooperDisplay.();
     });
 };
@@ -442,30 +402,35 @@ Button(~w, Rect(390, 228, 85, 26))
 .drawsPeak_(false);
 
 ~updateStatus = {
-    ~status.string = "root: % , scale: %, octave: %"
-    .format(~root, ~scale.name, ~oct);
+    ~status.string = "typing base: % , scale: %"
+    .format(~baseMidi, ~scale.name);
 };
 
 ~updateLooperDisplay = {
-    var position = if(~playing) { ~loopPosition.() } { 0 };
-    var bar = (position div: ~beatsPerBar) + 1;
-    var beat = (position % ~beatsPerBar).floor + 1;
-    var mode = if(~recording) { "RECORDING" } { if(~playing) { "PLAYING  " } { "STOPPED  " } };
-    var lines = List.new;
-    lines.add("+-------------------------------------+");
-    lines.add("| BAR: %/%  BEAT: %  %  Q:% |"
-        .format(bar, ~loopBars, beat, mode, if(~quantize) { "1/16" } { "OFF " }));
-    lines.add("| TRACK     |1234|1234|1234|1234|");
-    lines.add("+------------+----+----+----+----+");
-    ~trackCount.do { |trackIndex|
-        var selected = if(trackIndex == ~selectedTrack) { ">" } { " " };
-        var armed = if(~recording and: { trackIndex == ~selectedTrack }) { "REC" } { "   " };
-        lines.add("| % T% [%] |%|"
-            .format(selected, trackIndex + 1, armed, ~trackTimeline.(~loopTracks[trackIndex])));
+    var degrees = ~trackDegrees[~selectedTrack].collect(_.asString).join(" ");
+    var transportLine = if(~playing) {
+        "| TRANSPORT: PLAYING                    |\n"
+    } {
+        "| TRANSPORT: STOPPED                    |\n"
     };
-	lines.add("| PLAYHEAD   |%|".format(~playheadTimeline.(position)));
-    lines.add("+------------+----+----+----+----+");
-    ~looperDisplay.string = lines.join(Char.nl);
+    var trackState = { |trackIndex|
+        if(~recording and: { ~selectedTrack == trackIndex }) { "REC " } {
+            if(~playing) { "PLAY" } { "STOP" };
+        };
+    };
+    ~looperDisplay.string = "+-------------------------------------+\n"
+    ++ transportLine
+    ++ "+---------+-------------+--------+\n"
+    ++ "| TRACK   | PDEF        | STATE  |\n"
+    ++ "+---------+-------------+--------+\n"
+    ++ "| 1       | \\arp1       | " ++ trackState.(0) ++ " |\n"
+    ++ "| 2       | \\bass       | " ++ trackState.(1) ++ " |\n"
+    ++ "| 3       | \\pad        | " ++ trackState.(2) ++ " |\n"
+    ++ "| 4       | \\melody     | " ++ trackState.(3) ++ " |\n"
+    ++ "+---------+-------------+--------+\n"
+    ++ "| SELECTED: % BASE: % |\n".format(~selectedTrack + 1, ~trackRoots[~selectedTrack])
+    ++ "| DEGREES: % |\n".format(if(degrees.isEmpty) { "(empty)" } { degrees })
+    ++ "+-------------------------------------+";
 };
 ~updateStatus.();
 ~updateLooperDisplay.();
@@ -479,10 +444,6 @@ Button(~w, Rect(390, 228, 85, 26))
 
 ~w.view.keyDownAction = { |view, char, mod, unicode, keycode|
     switch(char,
-        $[, { ~oct = (~oct - 1).clip(-4, 4); ~updateStatus.(); },
-        $], { ~oct = (~oct + 1).clip(-4, 4); ~updateStatus.(); },
-        $-, { ~root = (~root - 1).clip(0, 127); ~updateStatus.(); },
-        $=, { ~root = (~root + 1).clip(0, 127); ~updateStatus.(); },
         $\\, { ~panic.(); },
 		$l, { ~panic.(); ~reload.(); },
 		{ ~noteOn.(char, ~keyMap[char]); ~status.string = "char: %".format(char) }
@@ -496,7 +457,9 @@ Button(~w, Rect(390, 228, 85, 26))
 ~w.onClose_({
     ~oscKeyResponders.do(_.free);
     ~touchOscNoteResponders.do(_.free);
-    ~touchOscModeResponders.do(_.free);
+    ~touchOscModeResponder.free;
+    ~sharpResponder.free;
+    ~chordsResponder.free;
     ~pushResponders.do(_.free);
 	~noteParamResponders.do(_.free);
     ~cutoffResponder.free;
