@@ -191,23 +191,24 @@ SynthDef(\plink, {
 // TODO: LFO to raise Q at the end of the note, like a pluck?
 // kvdrna-like arp: set lfodep and lfo rate to around 0.2
 SynthDef(\stones, {
-	arg gate = 1, atk = 0.02, rls = 1.1, freq = 880, amp = 0.4, 
+	arg gate = 1, atk = 0.02, rls = 1.1, freq = 880, amp = 0.6, 
 		lpf = 0.5, lpfq = 0, detune = 0.5, lfodep = 0.9, lforate = 0.5, 
 		alpha = 0, beta = 0, cutoffMonitor = 0;
-	var env, sig, lfo, resonanceLfo, cutoff, hasStarted, startupTimeout;
+    var env, sig, lfo, resonanceLfo, cutoff, hasStarted, startupTimeout, safeFreq;
 
 	var detuneFactors = [ -2, -1, 0, 1, 2] * detune * 0.02 + 1;
 
 	hasStarted = SetResetFF.kr(gate > 0, 0);
 	startupTimeout = Line.kr(0, 1, 0.05);
 	FreeSelf.kr(startupTimeout * (gate <= 0) * (hasStarted <= 0));
-	env = EnvGen.kr(Env.asr(atk, 1, rls), gate, doneAction: 2);
-	lfo = EnvGen.kr(Env.perc(lforate.linexp(0, 1, 0.01, 2), lfodep.linexp(0, 1, 0.01, 2)), gate);
-	resonanceLfo = EnvGen.kr(Env.perc(beta.linexp(0, 1, 0.01, 2), alpha.linexp(0, 1, 0.01, 2)), gate);
-	sig = Saw.ar(freq * detuneFactors, 0.8);
-	cutoff = (freq * lpf.linexp(0, 1, 0.5, 32) * (1 + lfo)).max(20);
+    safeFreq = freq.max(0.1);
+    env = EnvGen.kr(Env.asr(atk.max(0.001), 1, rls.max(0.001)), gate, doneAction: 2);
+    lfo = EnvGen.kr(Env.perc(lforate.clip(0, 1).linexp(0, 1, 0.01, 2), lfodep.clip(0, 1).linexp(0, 1, 0.01, 2)), gate);
+    resonanceLfo = EnvGen.kr(Env.perc(beta.clip(0, 1).linexp(0, 1, 0.01, 2), alpha.clip(0, 1).linexp(0, 1, 0.01, 2)), gate);
+    sig = Saw.ar(safeFreq * detuneFactors, 0.8);
+    cutoff = (safeFreq * lpf.clip(0, 1).linexp(0, 1, 0.5, 32) * (1 + lfo)).clip(20, 18000);
 	SendReply.kr(Impulse.kr(20) * cutoffMonitor, '/stones/cutoff', cutoff);
-	sig = RLPF.ar(sig, cutoff, (lpfq + resonanceLfo).clip(0, 1).linlin(0, 1, 1, 0.05));
-	sig = Splay.ar(sig * env * amp);
+    sig = RLPF.ar(sig, cutoff, (lpfq.clip(0, 1) + resonanceLfo).clip(0, 1).linlin(0, 1, 1, 0.05));
+    sig = Limiter.ar(LeakDC.ar(Splay.ar(sig * env * amp)), 0.9, 0.01);
 	Out.ar(0, sig);
 }).add;

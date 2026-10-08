@@ -1,14 +1,10 @@
 (
 	~projectDir = thisProcess.nowExecutingPath.dirname;
+	~reverbMode = \current; // \current, \nhhall, or \none
 
 	~reload = {
-		// Load synthdefs (executes that file in this interpreter)
 		(~projectDir +/+ "synthdefs.scd").load;
-		// (~projectDir +/+ "piece1.scd").load;
-
-	//	(~projectDir +/+ "drumseq.scd").load;
-
-
+		(~projectDir +/+ "piece2.scd").load;
 	};
 
 	~reload.();
