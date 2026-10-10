@@ -1,6 +1,6 @@
 (
 	~projectDir = thisProcess.nowExecutingPath.dirname;
-	~reverbMode = \current; // \current, \nhhall, or \none
+	~reverbMode = \none; // \current, \nhhall, or \none
 
 	~reload = {
 		(~projectDir +/+ "synthdefs.scd").load;
@@ -15,6 +15,20 @@
 s.queryAllNodes;
 
 
+
+(
+    // frog
+	~trackNoteParams[0].putAll((
+		lpf: 0.28,
+		lpfq: 0.18,
+		detune: 0.16,
+		lfodep: 0.32,
+		lforate: 0.22,
+		alpha: 0.12,
+		beta: 0.24,
+		amp: 0.28
+	));
+)
 
 
 
@@ -91,20 +105,7 @@ Pdef(\arp,
         \beta, Pfunc { ~noteParams[\beta] }
 
 	)
-).play(~loopClock, quant: ~beatsPerBar);
-)
-
-(
-	~trackNoteParams[0].putAll((
-		lpf: 0.28,
-		lpfq: 0.18,
-		detune: 0.16,
-		lfodep: 0.32,
-		lforate: 0.22,
-		alpha: 0.12,
-		beta: 0.24,
-		amp: 0.28
-	));
+).play(quant: ~beatsPerBar);
 )
 
 

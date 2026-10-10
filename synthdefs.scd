@@ -192,19 +192,25 @@ SynthDef(\plink, {
 // kvdrna-like arp: set lfodep and lfo rate to around 0.2
 SynthDef(\stones, {
 	arg gate = 1, atk = 0.02, rls = 1.1, freq = 880, amp = 0.6, 
-		lpf = 0.5, lpfq = 0, detune = 0.5, lfodep = 0.9, lforate = 0.5, 
+		lpf = 0.5, lpfq = 0, detune = 0.5, lfodep = 0.0, lforate = 0.0, 
 		alpha = 0, beta = 0, cutoffMonitor = 0;
     var env, sig, lfo, resonanceLfo, cutoff, hasStarted, startupTimeout, safeFreq;
 
 	var detuneFactors = [ -2, -1, 0, 1, 2] * detune * 0.02 + 1;
 
+	// handling fast playing so that synths get freed
 	hasStarted = SetResetFF.kr(gate > 0, 0);
 	startupTimeout = Line.kr(0, 1, 0.05);
 	FreeSelf.kr(startupTimeout * (gate <= 0) * (hasStarted <= 0));
     safeFreq = freq.max(0.1);
-    env = EnvGen.kr(Env.asr(atk.max(0.001), 1, rls.max(0.001)), gate, doneAction: 2);
-    lfo = EnvGen.kr(Env.perc(lforate.clip(0, 1).linexp(0, 1, 0.01, 2), lfodep.clip(0, 1).linexp(0, 1, 0.01, 2)), gate);
-    resonanceLfo = EnvGen.kr(Env.perc(beta.clip(0, 1).linexp(0, 1, 0.01, 2), alpha.clip(0, 1).linexp(0, 1, 0.01, 2)), gate);
+	env = EnvGen.kr(Env.asr(atk.max(0.001), 1, rls.max(0.001)), gate, doneAction: 2);
+	// env = EnvGen.kr(Env.new(levels: [0, 1, 0], times: [1, 1]), gate, doneAction: 2);
+    lfo = EnvGen.kr(
+		Env.perc(0.01, lforate.clip(0, 1).linexp(0, 1, 0.01, 2)),
+		gate) * lfodep.clip(0, 1);
+    resonanceLfo = EnvGen.kr(
+		Env.perc(0.01, beta.clip(0, 1).linexp(0, 1, 0.01, 2)),
+		gate) * alpha.clip(0, 1);
     sig = Saw.ar(safeFreq * detuneFactors, 0.8);
     cutoff = (safeFreq * lpf.clip(0, 1).linexp(0, 1, 0.5, 32) * (1 + lfo)).clip(20, 18000);
 	SendReply.kr(Impulse.kr(20) * cutoffMonitor, '/stones/cutoff', cutoff);

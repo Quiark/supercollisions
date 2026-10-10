@@ -18,13 +18,13 @@ SynthDef(\kbdAmbient, { |out=0, freq=440, gate=1, amp=0.15, bright=2000, rq=0.25
     Out.ar(out, sig);
 }).add;
 
+TempoClock.default.tempo = 120/60; // 120 bpm
 ~held = IdentityDictionary.new;
 ~heldDegrees = IdentityDictionary.new;
 ~heldSharpCapable = IdentityDictionary.new;
 ~heldChords = IdentityDictionary.new;
 ~sharpHeld = false;
 ~chordMode = 0;
-~loopClock = TempoClock.new(2);
 ~trackNames = [\arp1, \bass, \pad, \melody];
 ~trackDegrees = Array.fill(~trackNames.size, { List.new });
 ~trackIndices = Array.fill(~trackNames.size, 0);
@@ -36,7 +36,7 @@ SynthDef(\kbdAmbient, { |out=0, freq=440, gate=1, amp=0.15, bright=2000, rq=0.25
 if(~trackPlayers.notNil) { ~trackPlayers.values.do(_.stop) };
 ~trackPlayers = IdentityDictionary.new;
 ~trackNoteParams = Array.fill(~trackNames.size, {
-    (lpf: 0.5, lpfq: 0, detune: 0.5, lfodep: 0.9, lforate: 0.5, alpha: 0, beta: 0, amp: 0.33)
+    (lpf: 0.0, lpfq: 0, detune: 0.0, lfodep: 0.0, lforate: 0.0, alpha: 0, beta: 0, amp: 0.83)
 });
 ~noteParams = ~trackNoteParams[~selectedTrack];
 ~cutoffMonitorNode = nil;
@@ -199,7 +199,12 @@ if(~trackPlayers.notNil) { ~trackPlayers.values.do(_.stop) };
 
 ~startTransport = {
     if(~playing.not) {
-        ~trackNames.do { |name| ~trackPlayers[name] = Pdef(name).play(~loopClock) };
+        ~trackNames.do { |name, trackIndex|
+            var stonesParams = ~trackNoteParams[trackIndex].copy;
+            stonesParams.putAll((instrument: ~kbdInstr, dur: 1/4, legato: 0.75, rls: 0.3));
+            "% stones params: %".format(name, stonesParams).postln;
+            ~trackPlayers[name] = Pdef(name).play();
+        };
         ~playing = true;
     };
 };
@@ -214,11 +219,18 @@ if(~masterReverbDamp.isNil) { ~masterReverbDamp = 0.45 };
 if(~masterReverb.notNil) { ~masterReverb.free };
 ~masterReverb = nil;
 SynthDef(\masterReverb, { |out=0, mix=0.28, room=0.88, damp=0.45, amp=1|
-    var input, signal;
+    var input, signal, hall;
     input = In.ar(out, 2);
-    damp.poll(label: "master reverb damp");
     signal = switch(~reverbMode,
-        \nhhall, { NHHall.ar(input, mix: mix, room: room, damp: damp) },
+        \nhhall, {
+            hall = NHHall.ar(
+                input,
+                rt60: room.linlin(0, 1, 0.1, 12),
+                hiFreq: damp.linlin(0, 1, 12000, 500),
+                hiRatio: damp.linlin(0, 1, 1, 0.2)
+            );
+            XFade2.ar(input, hall, mix.linlin(0, 1, -1, 1));
+        },
         \none, { input },
         { FreeVerb2.ar(input[0], input[1], mix, room, damp) }
     );
