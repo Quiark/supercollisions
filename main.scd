@@ -35,7 +35,7 @@ s.queryAllNodes;
 
 
 
-~kbdInstr = \stones;
+~kbdInstr = \oscbass;
 
 
 (

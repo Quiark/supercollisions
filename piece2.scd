@@ -1,8 +1,8 @@
 (
 // ---------- musical settings ----------
 ~scale = Scale.major;
-~baseMidi = 48;
-~kbdInstr = \stones;
+~baseMidi = 36;
+~kbdInstr = \fmbass;
 
 SynthDef(\kbdAmbient, { |out=0, freq=440, gate=1, amp=0.15, bright=2000, rq=0.25, pan=0|
     var sig, env, cutoff;
@@ -28,7 +28,7 @@ TempoClock.default.tempo = 120/60; // 120 bpm
 ~trackNames = [\arp1, \bass, \pad, \melody];
 ~trackDegrees = Array.fill(~trackNames.size, { List.new });
 ~trackIndices = Array.fill(~trackNames.size, 0);
-~trackRoots = Array.fill(~trackNames.size, { ~baseMidi });
+~trackRoots = Array.fill(~trackNames.size, { ~baseMidi.mod(12) });
 ~arpDegrees = ~trackDegrees[0];
 ~selectedTrack = 0;
 ~recording = false;
@@ -46,12 +46,6 @@ if(~trackPlayers.notNil) { ~trackPlayers.values.do(_.stop) };
     var degrees = ~scale.degrees;
     var octAdd = (deg div: degrees.size) * 12;
     ~baseMidi + degrees.wrapAt(deg) + octAdd;
-};
-
-~trackDegreeToMidi = { |trackIndex, degree|
-    var degrees = ~scale.degrees;
-    var octAdd = (degree div: degrees.size) * 12;
-    ~trackRoots[trackIndex] + degrees.wrapAt(degree) + octAdd;
 };
 
 ~noteArgs = { |degree, sharp=false|
@@ -73,9 +67,9 @@ if(~trackPlayers.notNil) { ~trackPlayers.values.do(_.stop) };
                 degree;
             };
         },
-        \freq, Pfunc { |event|
-            if(event[\degree] == \rest) { 0 } { ~trackDegreeToMidi.(trackIndex, event[\degree]).midicps };
-        },
+        \scale, Pfunc { ~scale },
+        \root, Pfunc { ~trackRoots[trackIndex] },
+        \octave, ~baseMidi.div(12),
         \dur, 1/4,
         \legato, 0.75,
         \rls, 0.3,
@@ -189,7 +183,9 @@ if(~trackPlayers.notNil) { ~trackPlayers.values.do(_.stop) };
 };
 
 ~transposeSelectedTrack = { |degree|
-    if(degree != \rest) { ~trackRoots[~selectedTrack] = ~degreeToMidi.(degree) };
+    if(degree != \rest) {
+        ~trackRoots[~selectedTrack] = ~degreeToMidi.(degree) - (~baseMidi.div(12) * 12);
+    };
 };
 
 ~selectTrack = { |trackIndex|
@@ -202,7 +198,6 @@ if(~trackPlayers.notNil) { ~trackPlayers.values.do(_.stop) };
         ~trackNames.do { |name, trackIndex|
             var stonesParams = ~trackNoteParams[trackIndex].copy;
             stonesParams.putAll((instrument: ~kbdInstr, dur: 1/4, legato: 0.75, rls: 0.3));
-            "% stones params: %".format(name, stonesParams).postln;
             ~trackPlayers[name] = Pdef(name).play();
         };
         ~playing = true;
@@ -219,15 +214,16 @@ if(~masterReverbDamp.isNil) { ~masterReverbDamp = 0.45 };
 if(~masterReverb.notNil) { ~masterReverb.free };
 ~masterReverb = nil;
 SynthDef(\masterReverb, { |out=0, mix=0.28, room=0.88, damp=0.45, amp=1|
-    var input, signal, hall;
+    var input, signal, hall, decay;
     input = In.ar(out, 2);
     signal = switch(~reverbMode,
         \nhhall, {
+            decay = damp.clip(0, 1);
             hall = NHHall.ar(
                 input,
-                rt60: room.linlin(0, 1, 0.1, 12),
-                hiFreq: damp.linlin(0, 1, 12000, 500),
-                hiRatio: damp.linlin(0, 1, 1, 0.2)
+                rt60: room.linlin(0, 1, 0.1, 12) * decay.linexp(0, 1, 0.35, 1.5),
+                hiFreq: decay.linexp(0, 1, 12000, 500),
+                hiRatio: decay.linlin(0, 1, 1, 0.15)
             );
             XFade2.ar(input, hall, mix.linlin(0, 1, -1, 1));
         },

@@ -194,9 +194,31 @@ SynthDef(\stones, {
 	arg gate = 1, atk = 0.02, rls = 1.1, freq = 880, amp = 0.6, 
 		lpf = 0.5, lpfq = 0, detune = 0.5, lfodep = 0.0, lforate = 0.0, 
 		alpha = 0, beta = 0, cutoffMonitor = 0;
-    var env, sig, lfo, resonanceLfo, cutoff, hasStarted, startupTimeout, safeFreq;
+	var env, sig, lfo, resonanceLfo, cutoff, hasStarted, startupTimeout, safeFreq, detuneFactors, startTrigger;
 
-	var detuneFactors = [ -2, -1, 0, 1, 2] * detune * 0.02 + 1;
+	lpf = lpf.clip(0, 1);
+	lpfq = lpfq.clip(0, 1);
+	detune = detune.clip(0, 1);
+	lfodep = lfodep.clip(0, 1);
+	lforate = lforate.clip(0, 1);
+	alpha = alpha.clip(0, 1);
+	beta = beta.clip(0, 1);
+	cutoffMonitor = cutoffMonitor.clip(0, 1);
+	startTrigger = Impulse.kr(0);
+	Poll.kr(startTrigger, gate, \stones_gate);
+	Poll.kr(startTrigger, atk, \stones_atk);
+	Poll.kr(startTrigger, rls, \stones_rls);
+	Poll.kr(startTrigger, freq, \stones_freq);
+	Poll.kr(startTrigger, amp, \stones_amp);
+	Poll.kr(startTrigger, lpf, \stones_lpf);
+	Poll.kr(startTrigger, lpfq, \stones_lpfq);
+	Poll.kr(startTrigger, detune, \stones_detune);
+	Poll.kr(startTrigger, lfodep, \stones_lfodep);
+	Poll.kr(startTrigger, lforate, \stones_lforate);
+	Poll.kr(startTrigger, alpha, \stones_alpha);
+	Poll.kr(startTrigger, beta, \stones_beta);
+	Poll.kr(startTrigger, cutoffMonitor, \stones_cutoffMonitor);
+	detuneFactors = [ -2, -1, 0, 1, 2] * detune * 0.02 + 1;
 
 	// handling fast playing so that synths get freed
 	hasStarted = SetResetFF.kr(gate > 0, 0);
@@ -206,15 +228,89 @@ SynthDef(\stones, {
 	env = EnvGen.kr(Env.asr(atk.max(0.001), 1, rls.max(0.001)), gate, doneAction: 2);
 	// env = EnvGen.kr(Env.new(levels: [0, 1, 0], times: [1, 1]), gate, doneAction: 2);
     lfo = EnvGen.kr(
-		Env.perc(0.01, lforate.clip(0, 1).linexp(0, 1, 0.01, 2)),
-		gate) * lfodep.clip(0, 1);
+		Env.perc(0.01, lforate.linexp(0, 1, 0.01, 2)),
+		gate) * lfodep;
     resonanceLfo = EnvGen.kr(
-		Env.perc(0.01, beta.clip(0, 1).linexp(0, 1, 0.01, 2)),
-		gate) * alpha.clip(0, 1);
+		Env.perc(0.01, beta.linexp(0, 1, 0.01, 2)),
+		gate) * alpha;
     sig = Saw.ar(safeFreq * detuneFactors, 0.8);
-    cutoff = (safeFreq * lpf.clip(0, 1).linexp(0, 1, 0.5, 32) * (1 + lfo)).clip(20, 18000);
+    cutoff = (safeFreq * lpf.linexp(0, 1, 0.5, 32) * (1 + lfo)).clip(20, 18000);
 	SendReply.kr(Impulse.kr(20) * cutoffMonitor, '/stones/cutoff', cutoff);
-    sig = RLPF.ar(sig, cutoff, (lpfq.clip(0, 1) + resonanceLfo).clip(0, 1).linlin(0, 1, 1, 0.05));
+    sig = RLPF.ar(sig, cutoff, (lpfq + resonanceLfo).clip(0, 1).linlin(0, 1, 1, 0.05));
+    sig = Limiter.ar(LeakDC.ar(Splay.ar(sig * env * amp)), 0.9, 0.01);
+	Out.ar(0, sig);
+}).add;
+
+// slowly oscillates, more suitable as pad rather than dynamic bass
+SynthDef(\oscbass, {
+	arg gate = 1, atk = 0.5, rls = 2, freq = 880, amp = 0.6, lfodep = 0, lforate = 0, lpf = 0.5, detune = 0.5;
+	var env, sig, lpfenv, detuneFactors, filtLFO, cutoff, startTrigger;
+
+	lfodep = lfodep.clip(0, 1);
+	lforate = lforate.clip(0, 1);
+	lpf = lpf.clip(0, 1);
+	detune = detune.clip(0, 1);
+	startTrigger = Impulse.kr(0);
+	Poll.kr(startTrigger, gate, \oscbass_gate);
+	Poll.kr(startTrigger, atk, \oscbass_atk);
+	Poll.kr(startTrigger, rls, \oscbass_rls);
+	Poll.kr(startTrigger, freq, \oscbass_freq);
+	Poll.kr(startTrigger, amp, \oscbass_amp);
+	Poll.kr(startTrigger, lfodep, \oscbass_lfodep);
+	Poll.kr(startTrigger, lforate, \oscbass_lforat);
+	Poll.kr(startTrigger, lpf, \oscbass_lpf);
+	Poll.kr(startTrigger, detune, \oscbass_detune);
+	detuneFactors = [  -0.7, 0, 1.1, 2.7 ] * detune * 0.02 + 1;
+
+	filtLFO = SinOsc.kr(lforate.linexp(0, 1, 0.01, 10)) * lfodep;
+	sig = SinOsc.ar(freq * detuneFactors , 0, 0.5) + LFTri.ar(freq  , 1.3, 0.5);
+	env = EnvGen.kr(Env.asr(atk.max(0.001), 1, rls.max(0.001)), gate, doneAction: 2);
+
+	cutoff = (freq * lpf.linexp(0, 1, 0.5, 32) * (1 + filtLFO)).clip(20, 18000);
+	sig = RLPF.ar(sig, cutoff);
+
+	SendReply.kr(Impulse.kr(20), '/stones/cutoff', cutoff);
+    sig = Limiter.ar(LeakDC.ar(Splay.ar(sig * env * amp)), 0.9, 0.01);
+	Out.ar(0, sig);
+}).add;
+
+SynthDef(\fmbass, {
+	arg gate = 1, atk = 0.05, rls = 0.4, freq = 880, amp = 0.6, lfodep = 0, lforate = 0, lpf = 0.5, detune = 0.5,
+		alpha = 0, beta = 0, lpfq = 0;
+	var env, sig, lpfenv, detuneFactors, modLFO, cutoff, startTrigger, resonanceLfo;
+
+	lfodep = lfodep.clip(0, 1);
+	lforate = lforate.clip(0, 1);
+	lpf = lpf.clip(0, 1);
+	lpfq = lpfq.clip(0, 1);
+	detune = detune.clip(0, 1);
+	alpha = alpha.clip(0, 1);
+	beta = beta.clip(0, 1);
+
+	startTrigger = Impulse.kr(0);
+	Poll.kr(startTrigger, gate, \oscbass_gate);
+	Poll.kr(startTrigger, atk, \oscbass_atk);
+	Poll.kr(startTrigger, rls, \oscbass_rls);
+	Poll.kr(startTrigger, freq, \oscbass_freq);
+	Poll.kr(startTrigger, amp, \oscbass_amp);
+	Poll.kr(startTrigger, lfodep, \oscbass_lfodep);
+	Poll.kr(startTrigger, lforate, \oscbass_lforat);
+	Poll.kr(startTrigger, lpf, \oscbass_lpf);
+	Poll.kr(startTrigger, detune, \oscbass_detune);
+	detuneFactors = [  -2, -1, 0, 1, 2 ] * detune * 0.02 + 1;
+
+    resonanceLfo = EnvGen.kr(
+		Env.perc(0.01, beta.linexp(0, 1, 0.01, 2)),
+		gate) * alpha;
+
+	modLFO = SinOsc.kr(lforate.linexp(0, 1, 500, 4000)) * lfodep;
+	modLFO.poll;
+	sig = VarSaw.ar(freq * detuneFactors, iphase: modLFO);
+	env = EnvGen.kr(Env.asr(atk.max(0.001), 1, rls.max(0.001)), gate, doneAction: 2);
+
+	cutoff = (freq * lpf.linexp(0, 1, 0.5, 32)).clip(20, 18000);
+	sig = RLPF.ar(sig, cutoff, (lpfq + resonanceLfo).clip(0, 1).linlin(0, 1, 1, 0.05));
+
     sig = Limiter.ar(LeakDC.ar(Splay.ar(sig * env * amp)), 0.9, 0.01);
 	Out.ar(0, sig);
 }).add;

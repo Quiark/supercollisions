@@ -106,9 +106,9 @@
     }.defer;
 }, '/stones/cutoff');
 
-OSCdef(\masterReverbGamma, { |msg|
+~masterReverbGamma = OSCdef(\masterReverbGamma, { |msg|
     ~masterReverbDamp = msg[1].asFloat.clip(0, 1);
-    if(~masterReverb.notNil) { ~masterReverb.set(\damp, ~masterReverbDamp) };
+    if(~masterReverb.notNil) { ~masterReverb.set(\mix, ~masterReverbDamp) };
 }, '/gamma');
 
 // ---------- GUI ----------
@@ -192,7 +192,7 @@ Button(~w, Rect(295, 325, 85, 26))
     ++ "│ 3       │ \\pad        │ " ++ trackState.(2) ++ " │\n"
     ++ "│ 4       │ \\melody     │ " ++ trackState.(3) ++ " │\n"
     ++ "└─────────┴─────────────┴────────┘\n"
-    ++ " SELECTED: % BASE: %             \n".format(~selectedTrack + 1, ~trackRoots[~selectedTrack])
+    ++ " SELECTED: % ROOT: %             \n".format(~selectedTrack + 1, ~trackRoots[~selectedTrack])
     ++ " DEGREES: %                      \n".format(if(degrees.isEmpty) { "(empty)" } { degrees })
 };
 ~updateStatus.();
