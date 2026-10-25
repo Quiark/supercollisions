@@ -62,6 +62,47 @@ SynthDef(\hat, { |out=0, amp=0.35|
 	Out.ar(out, (sig * amp).dup);
 }).add;
 
+// Tunable drum set: frequencies in Hz, envelope times in seconds, mixes in 0..1.
+SynthDef(\basicKick, {
+	arg out = 0, amp = 0.7, pan = 0, freq = 50, atk = 0.001, rls = 0.35,
+		sweep = 4, sweepTime = 0.035, click = 0.15, clickFreq = 3500, drive = 1.5;
+	var env, pitchEnv, clickEnv, sig;
+
+	env = Env.perc(atk.max(0.0001), rls.max(0.001), curve: -6).ar(doneAction: 2);
+	pitchEnv = Env([sweep.max(1), 1], [sweepTime.max(0.001)], curve: -6).ar;
+	clickEnv = Env.perc(0.0001, 0.015).ar;
+	sig = SinOsc.ar(freq.max(20) * pitchEnv) * env;
+	sig = sig + (HPF.ar(WhiteNoise.ar, clickFreq.clip(20, 18000)) * clickEnv * env * click.clip(0, 1));
+	sig = (sig * drive.max(1)).tanh;
+	Out.ar(out, Pan2.ar(sig * amp, pan));
+}).add;
+
+SynthDef(\basicSnare, {
+	arg out = 0, amp = 0.5, pan = 0, freq = 180, atk = 0.001, rls = 0.2,
+		noiseMix = 0.7, ffreq = 2500, rq = 0.8, toneDecay = 0.6;
+	var env, toneEnv, tone, noise, sig;
+
+	env = Env.perc(atk.max(0.0001), rls.max(0.001), curve: -4).ar(doneAction: 2);
+	toneEnv = Env.perc(atk.max(0.0001), rls.max(0.001) * toneDecay.clip(0.01, 1)).ar;
+	tone = (SinOsc.ar(freq.max(20)) + (SinOsc.ar(freq.max(20) * 1.6) * 0.5)) * toneEnv;
+	noise = BPF.ar(WhiteNoise.ar, ffreq.clip(20, 18000), rq.clip(0.05, 1)) * env;
+	sig = (tone * (1 - noiseMix.clip(0, 1))) + (noise * noiseMix.clip(0, 1));
+	Out.ar(out, Pan2.ar(sig * amp, pan));
+}).add;
+
+SynthDef(\basicHat, {
+	arg out = 0, amp = 0.3, pan = 0, freq = 400, atk = 0.001, rls = 0.07,
+		ffreq = 6500, rq = 0.6, metallic = 0.5;
+	var env, metal, noise, sig;
+
+	env = Env.perc(atk.max(0.0001), rls.max(0.001), curve: -6).ar(doneAction: 2);
+	metal = Pulse.ar(freq.max(20) * [1, 1.342, 1.789, 2.123, 2.731, 3.117], 0.5).sum / 6;
+	noise = WhiteNoise.ar;
+	sig = (metal * metallic.clip(0, 1)) + (noise * (1 - metallic.clip(0, 1)));
+	sig = BPF.ar(HPF.ar(sig, ffreq.clip(20, 18000)), (ffreq * 1.3).clip(20, 18000), rq.clip(0.05, 1));
+	Out.ar(out, Pan2.ar(sig * env * amp, pan));
+}).add;
+
 // from ai but sucks
 SynthDef(\metallic_arp, {
     arg out = 0, freq = 440, amp = 0.2, gate = 1, pan = 0,
@@ -69,7 +110,7 @@ SynthDef(\metallic_arp, {
         ffreq = 2000, rq = 0.25, 
         modIndex = 3.5, modMult = 2.71; // Non-integer multipliers sound more metallic
         
-    var carrier, modulator, modEnv, ampEnv, sig;
+    var carrier, modEnv, ampEnv, sig;
 
     // Snappy amp envelope for fast arpeggios
     ampEnv = EnvGen.kr(Env.adsr(atk, dec, sus, rel), gate, doneAction: 2);
@@ -77,10 +118,6 @@ SynthDef(\metallic_arp, {
     // Quick decay envelope to make the metallic ring "pluck" at the start of the note
     modEnv = EnvGen.kr(Env.adsr(0.001, 0.06, 0.1, 0.1), gate);
 
-    // The modulator creates the metallic frequency
-    modulator = SinOsc.ar(freq * modMult) * (modIndex * modEnv * 1000);
-
-    // PMOsc introduces phase modulation (FM synthesis) using the modulator
     carrier = PMOsc.ar(freq, freq * modMult, modIndex * modEnv);
     
     // Mix the FM carrier with a detuned Saw for extra electronic body
@@ -128,44 +165,16 @@ SynthDef(\pupluck, {
 // TODO would be sick to have UI to tune detune (sic) while playing arps
 // TODO idk maybe it has a high tone and a low saw (square?) as background at the same time
 SynthDef(\sarp, {
-	arg gate = 1, atk = 0.02, rls = 0.3, amp = 0.4, freq = 440, detune = 0.0045, fd = 1.1,
-	delayTime = 0.25, delayDecay = 1.1, delayMix = 0.3;
+	arg gate = 1, atk = 0.02, rls = 0.3, amp = 0.4, freq = 440, detune = 0.0045, fd = 1.1;
 
-	var env, del, dry, delayed, freeEnv;
-	//var sig = SinOsc.ar(440 * EnvGen.kr(Env.perc(atk, rls)) * [0.98, 0.99, 1.01, 1.02]);
-	//var sig = Klank.ar(`[[200, 315, 577, freq], nil, [1, 1, 1, 1]], Impulse.ar(2, 0, 0.4));
+	var env, freeEnv;
 	var sig = Saw.ar(freq * 0.25 * ([-2, -1, 0, 1, 2] * detune + 1), 0.8);
-	//sig = Mix.ar([sig, pad]);
 	sig = LPF.ar(sig, freq * fd); 
 
 
 	env = EnvGen.kr(Env.perc(atk, rls), gate);
 	sig = Splay.ar(sig) * env;
 	sig = NHHall.ar(sig, mix: 0.3, room: 0.9, damp: 0.5);
-	/*
-	// need to give more time for delay to play
-	freeEnv = EnvGen.kr(
-		Env([1, 1, 0], [rls + (delayTime * 1.5) + delayDecay, 0.02]),
-		gate,
-		doneAction: 2
-	);
-
-	dry = sig;
-
-	delayed = CombC.ar(
-		dry,
-		maxdelaytime: 1.0,
-		delaytime: [delayTime, delayTime],
-		decaytime: delayDecay
-	);
-
-	//delayed = LPF.ar(delayed, 4500);
-	//delayed = HPF.ar(delayed, 180);
-
-	//sig = XFade2.ar(dry, delayed, 0.5);
-
-	sig = dry + (delayed * 0.4);
-	*/
 	// TODO: problem: doesn't free itself
 	freeEnv = env;
 	Out.ar(0, sig * amp * freeEnv);
@@ -193,8 +202,8 @@ SynthDef(\plink, {
 SynthDef(\stones, {
 	arg gate = 1, atk = 0.02, rls = 1.1, freq = 880, amp = 0.6, 
 		lpf = 0.5, lpfq = 0, detune = 0.5, lfodep = 0.0, lforate = 0.0, 
-		alpha = 0, beta = 0, cutoffMonitor = 0;
-	var env, sig, lfo, resonanceLfo, cutoff, hasStarted, startupTimeout, safeFreq, detuneFactors, startTrigger;
+		alpha = 0, beta = 0, cutoffMonitor = 0, lfoshape = 1;
+	var env, sig, cutLFO, resonanceLfo, cutoff, hasStarted, startupTimeout, safeFreq, detuneFactors ;
 
 	lpf = lpf.clip(0, 1);
 	lpfq = lpfq.clip(0, 1);
@@ -204,21 +213,8 @@ SynthDef(\stones, {
 	alpha = alpha.clip(0, 1);
 	beta = beta.clip(0, 1);
 	cutoffMonitor = cutoffMonitor.clip(0, 1);
-	startTrigger = Impulse.kr(0);
-	Poll.kr(startTrigger, gate, \stones_gate);
-	Poll.kr(startTrigger, atk, \stones_atk);
-	Poll.kr(startTrigger, rls, \stones_rls);
-	Poll.kr(startTrigger, freq, \stones_freq);
-	Poll.kr(startTrigger, amp, \stones_amp);
-	Poll.kr(startTrigger, lpf, \stones_lpf);
-	Poll.kr(startTrigger, lpfq, \stones_lpfq);
-	Poll.kr(startTrigger, detune, \stones_detune);
-	Poll.kr(startTrigger, lfodep, \stones_lfodep);
-	Poll.kr(startTrigger, lforate, \stones_lforate);
-	Poll.kr(startTrigger, alpha, \stones_alpha);
-	Poll.kr(startTrigger, beta, \stones_beta);
-	Poll.kr(startTrigger, cutoffMonitor, \stones_cutoffMonitor);
 	detuneFactors = [ -2, -1, 0, 1, 2] * detune * 0.02 + 1;
+	lfoshape = (lfoshape * 4).round.clip(0, 4);
 
 	// handling fast playing so that synths get freed
 	hasStarted = SetResetFF.kr(gate > 0, 0);
@@ -227,42 +223,51 @@ SynthDef(\stones, {
     safeFreq = freq.max(0.1);
 	env = EnvGen.kr(Env.asr(atk.max(0.001), 1, rls.max(0.001)), gate, doneAction: 2);
 	// env = EnvGen.kr(Env.new(levels: [0, 1, 0], times: [1, 1]), gate, doneAction: 2);
-    lfo = EnvGen.kr(
-		Env.perc(0.01, lforate.linexp(0, 1, 0.01, 2)),
-		gate) * lfodep;
+	// OSC /lfoshape: 0 pluck, 1 down, 2 up, 3 down-up, 4 up-down
+	cutLFO = Select.kr(lfoshape, [
+		EnvGen.kr(Env.perc(0.01, lforate), gate),
+		EnvGen.kr(Env.new([1, 0], [lforate], 0.9), gate),
+		EnvGen.kr(Env.new([0, 1], [lforate], 0.9), gate),
+		EnvGen.kr(Env.new([1, 0, 1], [lforate / 2, lforate / 2], 0.9), gate),
+		EnvGen.kr(Env.new([0, 1, 0], [lforate / 2, lforate / 2], 0.9), gate)
+	]) * lfodep;
     resonanceLfo = EnvGen.kr(
 		Env.perc(0.01, beta.linexp(0, 1, 0.01, 2)),
 		gate) * alpha;
     sig = Saw.ar(safeFreq * detuneFactors, 0.8);
-    cutoff = (safeFreq * lpf.linexp(0, 1, 0.5, 32) * (1 + lfo)).clip(20, 18000);
+    cutoff = (safeFreq * lpf.linexp(0, 1, 0.5, 32) * (1 + cutLFO)).clip(20, 18000);
 	SendReply.kr(Impulse.kr(20) * cutoffMonitor, '/stones/cutoff', cutoff);
     sig = RLPF.ar(sig, cutoff, (lpfq + resonanceLfo).clip(0, 1).linlin(0, 1, 1, 0.05));
     sig = Limiter.ar(LeakDC.ar(Splay.ar(sig * env * amp)), 0.9, 0.01);
 	Out.ar(0, sig);
 }).add;
 
+SynthDef(\kbdAmbient, { |out=0, freq=440, gate=1, amp=0.15, bright=2000, rq=0.25, pan=0|
+    var sig, env, cutoff;
+
+    sig = (VarSaw.ar(freq * [1, 1.003], 0, 0.3, 0.12).sum)
+        + (SinOsc.ar(freq * 0.5, 0, 0.06));
+    env = EnvGen.kr(Env.asr(0.5, 1, 3.5, curve: -4), gate, doneAction: 2);
+    cutoff = (bright * (0.7 + SinOsc.kr(0.08).range(0, 0.6))).clip(60, 12000);
+    sig = RLPF.ar(sig, cutoff, rq);
+    sig = Pan2.ar((sig * env * amp), pan);
+    sig = sig + FreeVerb2.ar(sig[0], sig[1], mix: 0.25, room: 0.9, damp: 0.5);
+    sig = HPF.ar(LeakDC.ar(sig), 20).tanh;
+    Out.ar(out, sig);
+}).add;
+
 // slowly oscillates, more suitable as pad rather than dynamic bass
 SynthDef(\oscbass, {
 	arg gate = 1, atk = 0.5, rls = 2, freq = 880, amp = 0.6, lfodep = 0, lforate = 0, lpf = 0.5, detune = 0.5;
-	var env, sig, lpfenv, detuneFactors, filtLFO, cutoff, startTrigger;
+	var env, sig, detuneFactors, filtLFO, cutoff ;
 
 	lfodep = lfodep.clip(0, 1);
 	lforate = lforate.clip(0, 1);
 	lpf = lpf.clip(0, 1);
 	detune = detune.clip(0, 1);
-	startTrigger = Impulse.kr(0);
-	Poll.kr(startTrigger, gate, \oscbass_gate);
-	Poll.kr(startTrigger, atk, \oscbass_atk);
-	Poll.kr(startTrigger, rls, \oscbass_rls);
-	Poll.kr(startTrigger, freq, \oscbass_freq);
-	Poll.kr(startTrigger, amp, \oscbass_amp);
-	Poll.kr(startTrigger, lfodep, \oscbass_lfodep);
-	Poll.kr(startTrigger, lforate, \oscbass_lforat);
-	Poll.kr(startTrigger, lpf, \oscbass_lpf);
-	Poll.kr(startTrigger, detune, \oscbass_detune);
 	detuneFactors = [  -0.7, 0, 1.1, 2.7 ] * detune * 0.02 + 1;
 
-	filtLFO = SinOsc.kr(lforate.linexp(0, 1, 0.01, 10)) * lfodep;
+	filtLFO = SinOsc.kr(lforate.linexp(0, 1, 0.01, 500)) * lfodep;
 	sig = SinOsc.ar(freq * detuneFactors , 0, 0.5) + LFTri.ar(freq  , 1.3, 0.5);
 	env = EnvGen.kr(Env.asr(atk.max(0.001), 1, rls.max(0.001)), gate, doneAction: 2);
 
@@ -274,10 +279,13 @@ SynthDef(\oscbass, {
 	Out.ar(0, sig);
 }).add;
 
+// more suitable for longer drone, 
+// TODO remove attack
+// TODO fix aliasing when multiple played together
 SynthDef(\fmbass, {
 	arg gate = 1, atk = 0.05, rls = 0.4, freq = 880, amp = 0.6, lfodep = 0, lforate = 0, lpf = 0.5, detune = 0.5,
 		alpha = 0, beta = 0, lpfq = 0;
-	var env, sig, lpfenv, detuneFactors, modLFO, cutoff, startTrigger, resonanceLfo;
+	var env, sig, detuneFactors, modLFO, cutoff, resonanceLfo;
 
 	lfodep = lfodep.clip(0, 1);
 	lforate = lforate.clip(0, 1);
@@ -287,30 +295,57 @@ SynthDef(\fmbass, {
 	alpha = alpha.clip(0, 1);
 	beta = beta.clip(0, 1);
 
-	startTrigger = Impulse.kr(0);
-	Poll.kr(startTrigger, gate, \oscbass_gate);
-	Poll.kr(startTrigger, atk, \oscbass_atk);
-	Poll.kr(startTrigger, rls, \oscbass_rls);
-	Poll.kr(startTrigger, freq, \oscbass_freq);
-	Poll.kr(startTrigger, amp, \oscbass_amp);
-	Poll.kr(startTrigger, lfodep, \oscbass_lfodep);
-	Poll.kr(startTrigger, lforate, \oscbass_lforat);
-	Poll.kr(startTrigger, lpf, \oscbass_lpf);
-	Poll.kr(startTrigger, detune, \oscbass_detune);
 	detuneFactors = [  -2, -1, 0, 1, 2 ] * detune * 0.02 + 1;
 
     resonanceLfo = EnvGen.kr(
 		Env.perc(0.01, beta.linexp(0, 1, 0.01, 2)),
 		gate) * alpha;
 
-	modLFO = SinOsc.kr(lforate.linexp(0, 1, 500, 4000)) * lfodep;
-	modLFO.poll;
-	sig = VarSaw.ar(freq * detuneFactors, iphase: modLFO);
+	modLFO = SinOsc.ar(freq * lforate.linexp(0, 1, 0.5, 8)) * lfodep;
+	sig = VarSaw.ar(freq * detuneFactors);
 	env = EnvGen.kr(Env.asr(atk.max(0.001), 1, rls.max(0.001)), gate, doneAction: 2);
 
-	cutoff = (freq * lpf.linexp(0, 1, 0.5, 32)).clip(20, 18000);
+	cutoff = ((1 + modLFO) * freq * lpf.linexp(0, 1, 0.5, 32)).clip(20, 18000);
 	sig = RLPF.ar(sig, cutoff, (lpfq + resonanceLfo).clip(0, 1).linlin(0, 1, 1, 0.05));
 
     sig = Limiter.ar(LeakDC.ar(Splay.ar(sig * env * amp)), 0.9, 0.01);
 	Out.ar(0, sig);
+}).add;
+
+
+SynthDef(\understatedReese, {
+	arg out = 0, gate = 1, freq = 55, amp = 0.3, atk = 0.02, rls = 0.5,
+		lpf = 0.4, lpfq = 0.25, detune = 0.2, lfodep = 0, lforate = 0,
+		alpha = 0, beta = 0, cutoffMonitor = 0;
+	var env, sig, cutoff, filterLfo, filterEnv, detuneAmount;
+
+	env = EnvGen.kr(Env.asr(atk.max(0.001), 1, rls.max(0.001)), gate, doneAction: 2);
+	detuneAmount = 0.003 + (detune.clip(0, 1) * 0.02);
+	filterLfo = SinOsc.kr(lforate.clip(0, 1).linexp(0, 1, 0.01, 10)) * lfodep.clip(0, 1);
+	filterEnv = EnvGen.kr(Env.perc(0.001, beta.clip(0, 1).linexp(0, 1, 0.01, 1)), gate) * alpha.clip(0, 1);
+	sig = Saw.ar(freq * [1 - detuneAmount, 1 + detuneAmount], 0.35).sum;
+	cutoff = (freq * lpf.clip(0, 1).linexp(0, 1, 3, 28) * (1 + filterLfo + filterEnv)).clip(30, 9000);
+	sig = RLPF.ar(sig, cutoff, lpfq.clip(0, 1).linlin(0, 1, 1, 0.1));
+	sig = LeakDC.ar(sig + SinOsc.ar(freq, mul: 0.15));
+	SendReply.kr(Impulse.kr(20) * cutoffMonitor.clip(0, 1), '/stones/cutoff', cutoff);
+	Out.ar(out, (sig * env * amp).dup);
+}).add;
+
+SynthDef(\woodyAcousticBass, {
+	arg out = 0, gate = 1, freq = 55, amp = 0.35, atk = 0.003, rls = 0.45,
+		lpf = 0.45, lpfq = 0.35, detune = 0, lfodep = 0, lforate = 0,
+		alpha = 0.18, beta = 0.3, cutoffMonitor = 0;
+	var env, pitchEnv, filterEnv, sig, cutoff, filterLfo, detuneAmount;
+
+	env = EnvGen.kr(Env.asr(atk.max(0.001), 1, rls.max(0.001)), gate, doneAction: 2);
+	pitchEnv = EnvGen.kr(Env([1.035, 1], [0.035], curve: -5), gate);
+	filterEnv = EnvGen.kr(Env.perc(0.002, beta.clip(0, 1).linexp(0, 1, 0.01, 1)), gate) * (0.12 + alpha.clip(0, 1));
+	filterLfo = SinOsc.kr(lforate.clip(0, 1).linexp(0, 1, 0.01, 10)) * lfodep.clip(0, 1);
+	detuneAmount = detune.clip(0, 1) * 0.01;
+	sig = LFTri.ar(freq * pitchEnv * [1 - detuneAmount, 1 + detuneAmount], mul: 0.35).sum;
+	sig = sig + (BPF.ar(WhiteNoise.ar, freq * 3, 0.35) * filterEnv);
+	cutoff = (freq * lpf.clip(0, 1).linexp(0, 1, 3, 18) * (1 + filterLfo + filterEnv)).clip(40, 10000);
+	//sig = RLPF.ar(sig, cutoff, lpfq.clip(0, 1).linlin(0, 1, 1, 0.1));
+	SendReply.kr(Impulse.kr(20) * cutoffMonitor.clip(0, 1), '/stones/cutoff', cutoff);
+	Out.ar(out, (LeakDC.ar(sig) * env * amp).dup);
 }).add;

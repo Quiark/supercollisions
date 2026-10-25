@@ -2,21 +2,7 @@
 // ---------- musical settings ----------
 ~scale = Scale.major;
 ~baseMidi = 36;
-~kbdInstr = \fmbass;
 
-SynthDef(\kbdAmbient, { |out=0, freq=440, gate=1, amp=0.15, bright=2000, rq=0.25, pan=0|
-    var sig, env, cutoff;
-
-    sig = (VarSaw.ar(freq * [1, 1.003], 0, 0.3, 0.12).sum)
-        + (SinOsc.ar(freq * 0.5, 0, 0.06));
-    env = EnvGen.kr(Env.asr(0.5, 1, 3.5, curve: -4), gate, doneAction: 2);
-    cutoff = (bright * (0.7 + SinOsc.kr(0.08).range(0, 0.6))).clip(60, 12000);
-    sig = RLPF.ar(sig, cutoff, rq);
-    sig = Pan2.ar((sig * env * amp), pan);
-    sig = sig + FreeVerb2.ar(sig[0], sig[1], mix: 0.25, room: 0.9, damp: 0.5);
-    sig = HPF.ar(LeakDC.ar(sig), 20).tanh;
-    Out.ar(out, sig);
-}).add;
 
 TempoClock.default.tempo = 120/60; // 120 bpm
 ~held = IdentityDictionary.new;
@@ -29,18 +15,35 @@ TempoClock.default.tempo = 120/60; // 120 bpm
 ~trackDegrees = Array.fill(~trackNames.size, { List.new });
 ~trackIndices = Array.fill(~trackNames.size, 0);
 ~trackRoots = Array.fill(~trackNames.size, { ~baseMidi.mod(12) });
-~arpDegrees = ~trackDegrees[0];
 ~selectedTrack = 0;
 ~recording = false;
 ~playing = false;
 if(~trackPlayers.notNil) { ~trackPlayers.values.do(_.stop) };
 ~trackPlayers = IdentityDictionary.new;
-~trackNoteParams = Array.fill(~trackNames.size, {
-    (lpf: 0.0, lpfq: 0, detune: 0.0, lfodep: 0.0, lforate: 0.0, alpha: 0, beta: 0, amp: 0.83)
+~trackNoteParams = Array.fill(~trackNames.size, { |trackIndex|
+    (lpf: 0.0, lpfq: 0, detune: 0.0, 
+		lfodep: 0.0, lforate: 0.0, lfoshape: 1, 
+		alpha: 0, beta: 0, amp: 0.83, rls: 1.1).putAll(~trackInstruments[trackIndex][\params])
 });
 ~noteParams = ~trackNoteParams[~selectedTrack];
 ~cutoffMonitorNode = nil;
-~logwrap = 0;
+
+~dumpPreset = { |trackIndex|
+    var params, code;
+    trackIndex = trackIndex ? ~selectedTrack;
+    params = ~trackNoteParams[trackIndex];
+    code = "(\n~trackInstruments[%] = (synthDef: %, params: (\n%\n));\n~trackNoteParams[%].putAll(~trackInstruments[%][\\params]);\n)".format(
+        trackIndex,
+        ~trackInstruments[trackIndex][\synthDef].asCompileString,
+        params.keys.asArray.sort.collect { |key|
+            "    %: %".format(key.asString, params[key].asCompileString)
+        }.join(",\n"),
+        trackIndex,
+        trackIndex
+    );
+    code.postln;
+    code;
+};
 
 ~degreeToMidi = { |deg|
     var degrees = ~scale.degrees;
@@ -56,7 +59,7 @@ if(~trackPlayers.notNil) { ~trackPlayers.values.do(_.stop) };
 
 ~makeArpPattern = { |trackIndex|
     Pbind(
-        \instrument, Pfunc { ~kbdInstr },
+        \instrument, Pfunc { ~trackInstruments[trackIndex][\synthDef] },
         \degree, Pfunc {
             var degree;
             if(~trackDegrees[trackIndex].isEmpty) {
@@ -72,13 +75,14 @@ if(~trackPlayers.notNil) { ~trackPlayers.values.do(_.stop) };
         \octave, ~baseMidi.div(12),
         \dur, 1/4,
         \legato, 0.75,
-        \rls, 0.3,
+        \rls, Pfunc { ~trackNoteParams[trackIndex][\rls] },
         \amp, Pfunc { ~trackNoteParams[trackIndex][\amp] },
         \lpf, Pfunc { ~trackNoteParams[trackIndex][\lpf] },
         \lpfq, Pfunc { ~trackNoteParams[trackIndex][\lpfq] },
         \detune, Pfunc { ~trackNoteParams[trackIndex][\detune] },
         \lfodep, Pfunc { ~trackNoteParams[trackIndex][\lfodep] },
         \lforate, Pfunc { ~trackNoteParams[trackIndex][\lforate] },
+        \lfoshape, Pfunc { ~trackNoteParams[trackIndex][\lfoshape] },
         \alpha, Pfunc { ~trackNoteParams[trackIndex][\alpha] },
         \beta, Pfunc { ~trackNoteParams[trackIndex][\beta] }
     );
@@ -105,18 +109,17 @@ if(~trackPlayers.notNil) { ~trackPlayers.values.do(_.stop) };
 
 ~noteOn = { |id, degree, record=true, sharpCapable=false|
     var syn;
-    if(degree.isNil) { ^nil };
-    if(~held[id].notNil) { ^nil };
-
-    syn = Synth(~kbdInstr, ~noteArgs.(degree, sharpCapable and: { ~sharpHeld }));
-    ~held[id] = syn;
-    ~heldDegrees[id] = degree;
-    ~heldSharpCapable[id] = sharpCapable;
-    if(~cutoffMonitorNode.isNil) {
-        ~cutoffMonitorNode = syn.nodeID;
-        syn.set(\cutoffMonitor, 1);
+    if(degree.notNil and: { ~held[id].isNil }) {
+        syn = Synth(~trackInstruments[~selectedTrack][\synthDef], ~noteArgs.(degree, sharpCapable and: { ~sharpHeld }));
+        ~held[id] = syn;
+        ~heldDegrees[id] = degree;
+        ~heldSharpCapable[id] = sharpCapable;
+        if(~cutoffMonitorNode.isNil) {
+            ~cutoffMonitorNode = syn.nodeID;
+            syn.set(\cutoffMonitor, 1);
+        };
+        if(record) { ~recordDegree.(degree) };
     };
-    if(record) { ~recordDegree.(degree) };
 };
 
 ~noteOff = { |id|
@@ -135,22 +138,22 @@ if(~trackPlayers.notNil) { ~trackPlayers.values.do(_.stop) };
 
 ~chordNoteOn = { |id, degree|
     var degrees, synths;
-    if(~held[id].notNil or: { ~heldChords[id].notNil }) { ^nil };
-
-    degrees = if(~chordMode == 1) {
-        [degree, degree + 2, degree + 4]
-    } {
-        [degree, degree + 2, degree + 4, degree + 6]
+    if(~held[id].isNil and: { ~heldChords[id].isNil }) {
+        degrees = if(~chordMode == 1) {
+            [degree, degree + 2, degree + 4]
+        } {
+            [degree, degree + 2, degree + 4, degree + 6]
+        };
+        synths = degrees.collect { |chordDegree|
+            Synth(~trackInstruments[~selectedTrack][\synthDef], ~noteArgs.(chordDegree, ~sharpHeld));
+        };
+        ~heldChords[id] = (synths: synths, degrees: degrees);
+        if(~cutoffMonitorNode.isNil) {
+            ~cutoffMonitorNode = synths[0].nodeID;
+            synths[0].set(\cutoffMonitor, 1);
+        };
+        ~recordDegree.(degree);
     };
-    synths = degrees.collect { |chordDegree|
-        Synth(~kbdInstr, ~noteArgs.(chordDegree, ~sharpHeld));
-    };
-    ~heldChords[id] = (synths: synths, degrees: degrees);
-    if(~cutoffMonitorNode.isNil) {
-        ~cutoffMonitorNode = synths[0].nodeID;
-        synths[0].set(\cutoffMonitor, 1);
-    };
-    ~recordDegree.(degree);
 };
 
 ~chordNoteOff = { |id|
@@ -195,9 +198,7 @@ if(~trackPlayers.notNil) { ~trackPlayers.values.do(_.stop) };
 
 ~startTransport = {
     if(~playing.not) {
-        ~trackNames.do { |name, trackIndex|
-            var stonesParams = ~trackNoteParams[trackIndex].copy;
-            stonesParams.putAll((instrument: ~kbdInstr, dur: 1/4, legato: 0.75, rls: 0.3));
+        ~trackNames.do { |name|
             ~trackPlayers[name] = Pdef(name).play();
         };
         ~playing = true;
@@ -230,7 +231,8 @@ SynthDef(\masterReverb, { |out=0, mix=0.28, room=0.88, damp=0.45, amp=1|
         \none, { input },
         { FreeVerb2.ar(input[0], input[1], mix, room, damp) }
     );
-    ReplaceOut.ar(out, LeakDC.ar(signal) * amp);
+    signal = Limiter.ar(LeakDC.ar(signal) * amp, 0.9, 0.01);
+    ReplaceOut.ar(out, signal);
 }).add;
 Routine({
     s.sync;

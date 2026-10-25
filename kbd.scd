@@ -2,6 +2,12 @@
 
 
 (
+if(~w.notNil) {
+    ~w.onClose = nil;
+    ~w.close;
+};
+if(~displayRoutine.notNil) { ~displayRoutine.stop };
+
 // typing keys -> scale degree index
 ~keyMap = IdentityDictionary[
     $a -> 0, $, -> 1, $o -> 2, $. -> 3, $e -> 4,
@@ -94,7 +100,7 @@
 
 ~noteParamResponders = ~noteParams.keys.collect { |key|
     OSCdef(("kbdParam_" ++ key).asSymbol, { |msg|
-        ~noteParams[key] = msg[1];
+        ~trackNoteParams[~selectedTrack][key] = msg[1].asFloat;
     }, "/" ++ key);
 };
 
@@ -111,9 +117,18 @@
     if(~masterReverb.notNil) { ~masterReverb.set(\mix, ~masterReverbDamp) };
 }, '/gamma');
 
+~oscResponders = [
+    ~oscKeyResponders.asArray, ~touchOscNoteResponders,
+    ~pushResponders, ~noteParamResponders.asArray,
+    ~touchOscModeResponder, ~sharpResponder, ~chordsResponder,
+    ~cutoffResponder, ~masterReverbGamma
+].flat;
+~oscResponders.do(_.enable);
+
 // ---------- GUI ----------
 ~w = Window("SC typing keyboard looper", Rect(100, 100, 740, 410)).front;
 ~w.view.background = Color.black;
+~w.view.canFocus = true;
 
 StaticText(~w, Rect(10, 10, 720, 18))
 .string_("Play: a , o . e u y i f d g h t | Panic: \\")
@@ -121,20 +136,25 @@ StaticText(~w, Rect(10, 10, 720, 18))
 
 ~status = StaticText(~w, Rect(10, 32, 720, 18)).stringColor_(Color.gray(0.9));
 
-~looperDisplay = StaticText(~w, Rect(10, 57, 720, 250))
+~looperScroll = ScrollView(~w, Rect(10, 57, 720, 250))
+.background_(Color.black);
+~looperDisplay = StaticText(~looperScroll, Rect(0, 0, 700, 230))
 .font_(Font("Menlo", 16))
 .stringColor_(Color(0.65, 0.95, 0.7));
 
 Button(~w, Rect(10, 325, 85, 26))
+.canFocus_(false)
 .states_([["PLAY", Color.white, Color(0.25, 0.4, 0.25)]])
 .action_({ ~startTransport.(); ~updateLooperDisplay.() });
 
 Button(~w, Rect(105, 325, 85, 26))
+.canFocus_(false)
 .states_([["STOP", Color.white, Color(0.6, 0.2, 0.2)]])
 .action_({ ~stopTransport.(); ~updateLooperDisplay.() });
 
 ~recordButton = Button(~w, Rect(200, 325, 85, 26))
-.states_([["REC", Color.white, Color.gray(0.3)], ["RECORDING", Color.white, Color.red]])
+.canFocus_(false)
+.states_([["STEP REC", Color.white, Color.gray(0.3)], ["RECORDING", Color.white, Color.red]])
 .action_({ |button|
     ~toggleRecording.();
     button.value = ~recording.binaryValue;
@@ -142,12 +162,17 @@ Button(~w, Rect(105, 325, 85, 26))
 });
 
 Button(~w, Rect(295, 325, 85, 26))
+.canFocus_(false)
 .states_([["CLEAR TRACK", Color.white, Color(0.5, 0.2, 0.2)]])
 .action_({ ~clearSelectedTrack.(); ~updateLooperDisplay.() });
 
 ~trackButtons = ~trackNames.collect { |name, trackIndex|
     Button(~w, Rect(10 + (trackIndex * 95), 372, 85, 26))
-    .states_([[name.asString.toUpper, Color.white, Color.gray(0.28)]])
+    .canFocus_(false)
+    .states_([
+        [name.asString.toUpper, Color.white, Color.gray(0.28)],
+        [name.asString.toUpper, Color.black, Color(0.65, 0.95, 0.7)]
+    ])
     .action_({
         ~selectTrack.(trackIndex);
         ~updateLooperDisplay.();
@@ -164,36 +189,68 @@ Button(~w, Rect(295, 325, 85, 26))
 .drawsPeak_(false);
 
 ~updateStatus = {
-    ~status.string = "typing base: % , scale: %"
-    .format(~baseMidi, ~scale.name);
+    ~status.string = "typing base: % , scale: % | track: % | instrument: %"
+    .format(~baseMidi, ~scale.name, ~trackNames[~selectedTrack], ~trackInstruments[~selectedTrack][\synthDef]);
 };
 
 ~updateLooperDisplay = {
-    var degrees = ~trackDegrees[~selectedTrack].collect(_.asString).join(" ");
+    var stepCount = (~trackDegrees.collect(_.size).maxItem.max(8) / 4).ceil.asInteger * 4;
+    var cellWidth = (~trackDegrees.flat.collect { |degree|
+        if(degree == \rest) { "-" } { degree.asString }
+    }.collect(_.size).maxItem ? 1);
+    var border = { |left, junction, right|
+        left ++ "─────────────────" ++ junction ++ "──────" ++ junction
+        ++ ("─".dup(cellWidth * 4).join).dup(stepCount div: 4).join(junction)
+        ++ right ++ "\n";
+    };
+    var stepHeader = (stepCount div: 4).collect { |group|
+        (group + 1).asString.padRight(cellWidth * 4) ++ "│"
+    }.join;
     var chordMode = switch(~chordMode, 0, { "  OFF  " }, 1, { " TRIAD " }, 2, { "SEVENTH" });
     var transportLine = if(~playing) {
-        "│ TRANSPORT: PLAYING             │\n"
+        "TRANSPORT: PLAYING\n"
     } {
-        "│ TRANSPORT: STOPPED             │\n"
+        "TRANSPORT: STOPPED\n"
     };
     var trackState = { |trackIndex|
         if(~recording and: { ~selectedTrack == trackIndex }) { "REC   " } {
             if(~playing) { "PLAY  " } { "STOP  " };
         };
     };
-    ~looperDisplay.string = "┌────────────────────────────────┐\n"
-    ++ transportLine
-    ++ "│ INPUT: %   CHORDS:  % │\n".format(~touchOscMode.asString.toUpper, chordMode)
-    ++ "├─────────┼─────────────┼────────┤\n"
-    ++ "│ TRACK   │ PDEF        │ STATE  │\n"
-    ++ "├─────────┼─────────────┼────────┤\n"
-    ++ "│ 1       │ \\arp1       │ " ++ trackState.(0) ++ " │\n"
-    ++ "│ 2       │ \\bass       │ " ++ trackState.(1) ++ " │\n"
-    ++ "│ 3       │ \\pad        │ " ++ trackState.(2) ++ " │\n"
-    ++ "│ 4       │ \\melody     │ " ++ trackState.(3) ++ " │\n"
-    ++ "└─────────┴─────────────┴────────┘\n"
-    ++ " SELECTED: % ROOT: %             \n".format(~selectedTrack + 1, ~trackRoots[~selectedTrack])
-    ++ " DEGREES: %                      \n".format(if(degrees.isEmpty) { "(empty)" } { degrees })
+    var trackRows = ~trackNames.collect { |name, trackIndex|
+        var steps = ~trackDegrees[trackIndex];
+        var cells = stepCount.collect { |step|
+            var degree = steps[step];
+            var text = if(degree.isNil) { "" } {
+                if(degree == \rest) { "-" } { degree.asString };
+            };
+            text.padLeft(cellWidth) ++ if((step + 1) % 4 == 0) { "│" } { "" };
+        }.join;
+        "│%│%│%\n".format(
+            "% % %".format(
+                if(trackIndex == ~selectedTrack) { ">" } { " " },
+                trackIndex + 1,
+                "\\" ++ name.asString
+            ).padRight(17),
+            trackState.(trackIndex),
+            cells
+        );
+    }.join;
+    ~trackButtons.do { |button, trackIndex|
+        button.value = (trackIndex == ~selectedTrack).binaryValue;
+    };
+    ~recordButton.value = ~recording.binaryValue;
+    ~updateStatus.();
+    ~looperDisplay.bounds = Rect(0, 0, ((26 + (stepCount * cellWidth) + (stepCount div: 4)) * 10).max(700), 230);
+    ~looperDisplay.string = transportLine
+    ++ "INPUT: %   CHORDS: %\n".format(~touchOscMode.asString.toUpper, chordMode)
+    ++ border.("┌", "┬", "┐")
+    ++ "│TRACK            │STATE │" ++ stepHeader ++ "\n"
+    ++ border.("├", "┼", "┤")
+    ++ trackRows
+    ++ border.("└", "┴", "┘")
+    ++ "SELECTED: % ROOT: %\n".format(~selectedTrack + 1, ~trackRoots[~selectedTrack])
+    ++ "Groups of 4 steps: numbers = degrees, - = pause";
 };
 ~updateStatus.();
 ~updateLooperDisplay.();
@@ -208,7 +265,7 @@ Button(~w, Rect(295, 325, 85, 26))
 ~w.view.keyDownAction = { |view, char, mod, unicode, keycode|
     switch(char,
         $\\, { ~panic.(); },
-		$l, { ~panic.(); ~reload.(); },
+		$l, { ~reload.(); },
 		{ ~noteOn.(char, ~keyMap[char]); ~status.string = "char: %".format(char) }
     );
 };
@@ -216,22 +273,14 @@ Button(~w, Rect(295, 325, 85, 26))
 ~w.view.keyUpAction = { |view, char, mod, unicode, keycode|
     ~noteOff.(char);
 };
+~w.view.focus;
 
 ~w.onClose_({
-    ~oscKeyResponders.do(_.free);
-    ~touchOscNoteResponders.do(_.free);
-    ~touchOscModeResponder.free;
-    ~sharpResponder.free;
-    ~chordsResponder.free;
-    ~pushResponders.do(_.free);
-    ~noteParamResponders.do(_.free);
-    ~cutoffResponder.free;
-    ~masterReverbGamma.free;
+    ~oscResponders.do(_.free);
     ~displayRoutine.stop;
     ~stopTransport.();
     ~panic.();
+    ~w = nil;
 });
 
 )
-
-// ---------- GUI ----------
